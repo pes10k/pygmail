@@ -19,7 +19,6 @@ def page_from_list(a_list, limit, offset):
         A slice from the given list with at most "limit" elements
 
     """
-
     count = len(a_list)
     # If the given offset is greater than the total number
     # of messages in the inbox, there are no messages to return
@@ -58,7 +57,6 @@ class GmailMailbox(object):
                             in easy, human readable format
 
         """
-
         self.account = account
         self.connection = account.connection()
         self.full_name = full_name
@@ -75,12 +73,30 @@ class GmailMailbox(object):
             error
 
         """
-
         rs, data = self.connection.select(self.name)
         if rs == "OK":
+            self.account.last_viewed_mailbox = self
             return GmailMailbox.COUNT_PATTERN.sub("", str(data))
         else:
             return None
+
+    def select(self):
+        """ Sets this mailbox as the current active one on the IMAP connection
+
+        In order to make sure we don't make many many redundant calls to the
+        IMAP server, we allow the account managing object to keep track
+        of which mailbox was last set as active.  If the current mailbox is
+        active, this method does nothing.
+
+        Returns:
+            True if any changes were made, otherwise False
+
+        """
+        if self is self.account.last_viewed_mailbox:
+            return False
+        self.count()
+        self.account.last_viewed_mailbox = self
+        return True
 
     def search(self, term, limit=100, offset=0):
         """ Searches for messages in the inbox that contain a given phrase
@@ -105,11 +121,7 @@ class GmailMailbox(object):
             limit-offset parameters)
 
         """
-
-        count = self.count()
-        if count is None:
-            return None
-
+        self.select()
         rs, data = self.connection.search(None, '(BODY "%s")' % (term))
         if rs != "OK":
             return None
@@ -138,13 +150,8 @@ class GmailMailbox(object):
             limit-offset parameters)
 
         """
-
-        count = self.count()
-        if count is None:
-            return None
-
+        self.select()
         rs, data = self.connection.search(None, 'ALL')
-
         if rs != "OK":
             return None
 
@@ -166,14 +173,9 @@ class GmailMailbox(object):
             A list of zero or more message objects
 
         """
-
-        ids_to_fetch_string = ",".join(ids)
-
+        self.select()
         request = '(UID FLAGS BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])'
-        fetch_rs, fetch_data = self.connection.fetch(
-            ids_to_fetch_string,
-            request
-        )
+        fetch_rs, fetch_data = self.connection.fetch(",".join(ids), request)
 
         messages = []
         for msg_parts in fetch_data[::-1]:

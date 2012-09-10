@@ -45,6 +45,7 @@ class GmailMessage(object):
         """
         self.mailbox = mailbox
         self.account = mailbox.account
+        self.connection = self.account.connection()
 
         self.id, self.uid, flags = GmailMessage.METADATA_PATTERN.match(message[0]).groups()
         self.flags = flags.split()
@@ -70,7 +71,6 @@ class GmailMessage(object):
             error occurs fetching the body of the messages, None is returned
 
         """
-
         # First check to see if we've already pulled down the body of this
         # message, in which case we can just return it w/o having to
         # pull from the server again
@@ -81,11 +81,11 @@ class GmailMessage(object):
         # raw, underlying email message object, in which case we can save
         # another network call to the IMAP server
         if self.raw is None:
-            self.mailbox.count()
-            status, data = self.account.connection().uid(
-                "fetch",
+            self.mailbox.select()
+            status, data = self.connection.uid(
+                "FETCH",
                 self.uid,
-                "RFC822"
+                "(RFC822)"
             )
             if status != "OK":
                 return None
@@ -169,18 +169,15 @@ class GmailMessage(object):
             self.sent_datetime = email.utils.parsedate(self.date)
         return self.sent_datetime
 
-    def delete(self, expunge=False):
+    def delete(self):
         """ Deletes the message from the IMAP server
 
-        Keyword arguments:
-            expunge -- Whether or not to scrub the message from the server, or
-                       just flag it as deleted
         Returns:
             A reference to the current object
 
         """
-        connection = self.account.connection()
-        self.mailbox.count()
+        connection = self.connection
+        self.mailbox.select()
 
         # First move the message we're trying to delete to the gmail
         # trash.
@@ -190,19 +187,21 @@ class GmailMessage(object):
         connection.uid('STORE', self.uid, '+FLAGS', '(\Deleted)')
         connection.expunge()
 
-        connection.select("[Gmail]/Trash")
-
         # Then, find the message we just added to the trash and mark that
         # to be deleted as well.
         #
         # @note there is a possible race condition here, since if someone else
         # sends us a message between when we did the above and below, we'll
         # end up deleting the wrong message
+        connection.select("[Gmail]/Trash")
         delete_uid = connection.uid('SEARCH', None, 'All')[1][0].split()[-1]
         rs, data = connection.uid('STORE', delete_uid, '+FLAGS', '\\Deleted')
         connection.expunge()
 
-
+        # Last, reselect the current mailbox.  We do this directly, instead
+        # of through the mailbox.select() method, since we didn't hand the
+        # token off to the "Trash" mailbox above.
+        self.connection.select(self.mailbox.name)
         return self
 
     def save(self):
@@ -218,11 +217,10 @@ class GmailMessage(object):
 
         """
         self.fetch_body()
-        self.delete(expunge=True)
+        self.delete()
+        self.mailbox.select()
 
-        self.mailbox.count()
-
-        rs, data = self.account.connection().append(
+        rs, data = self.connection.append(
             self.mailbox.name,
             " ".join(["(%s)" % flag for flag in self.flags]),
             self.datetime(),

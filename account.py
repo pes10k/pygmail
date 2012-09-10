@@ -33,6 +33,7 @@ class GmailAccount(object):
         self.xoauth_string = xoauth_string
         self.password = password
         self.connected = False
+        self.last_viewed_mailbox = None
 
     def mailboxes(self):
         """ Returns a list of all mailboxes in the current account
