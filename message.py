@@ -5,6 +5,30 @@ import email.utils
 from email.parser import HeaderParser
 
 
+def message_in_list(message, message_list):
+    """ Checks to see if a Gmail message is represented in a list
+
+    Checks to see if a list contains a message object representing the same
+    message as another provided message object.  Since its possible for two
+    different objects to represent the same email message, we can't rely
+    on list.__contains__() / in operator.  This helper function does the
+    effective same thing.
+
+    Arguments:
+        message      -- a GmailMessage object, reperesenting an email message
+        message_list -- a python list, containg zero or more GmailMessage
+                        objects
+
+    Returns:
+        True if the list contains an object representing the same message
+        the passed 'message' object represents, and otherwise False.
+    """
+    for a_message in message_list:
+        if message == a_message:
+            return True
+    return False
+
+
 class GmailMessage(object):
     """ GmailMessage objects represent individual emails in a Gmail inbox.
 
