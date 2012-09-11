@@ -3,7 +3,7 @@ pyGmail
 
 Description
 ---
-A python module for interacting with gmail accounts via user/pass or XOAuth
+A python module for interacting with gmail accounts via user/pass or [XOAuth](https://sites.google.com/site/oauthgoog/Home/oauthimap)
 
 Usage
 ---
