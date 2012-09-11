@@ -1,7 +1,6 @@
 import email
 import re
 import base64
-import time
 import email.utils
 from email.parser import HeaderParser
 
@@ -58,6 +57,12 @@ class GmailMessage(object):
         self.has_fetched_body = False
         self.raw = None
         self.sent_datetime = None
+
+    def __eq__(self, other):
+        """ Overrides equality operator to check by uid and mailbox name """
+        return (isinstance(other, GmailMessage) and
+            self.uid == other.uid and
+            self.mailbox.name == other.mailbox.name)
 
     def fetch_body(self):
         """ Returns the body of the email

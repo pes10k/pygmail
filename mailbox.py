@@ -2,7 +2,6 @@ import re
 import string
 import message as gm
 
-
 def page_from_list(a_list, limit, offset):
     """ Retreives the paginated section from the provided list
 
@@ -103,7 +102,11 @@ class GmailMailbox(object):
 
         Seaches for a given phrase in the current mailbox, and returns a list
         of messages that have the phrase in the HTML and/or plain text part
-        of their body
+        of their body.
+
+        Note that this search is done on the server, and not against the
+        message text directly, so its not a string level search (it falls
+        through to Google's more intellegent search)
 
         Args:
             term -- the search term to search for in the current mailbox
@@ -173,6 +176,8 @@ class GmailMailbox(object):
             A list of zero or more message objects
 
         """
+        if not ids:
+            return []
         self.select()
         request = '(UID FLAGS BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])'
         fetch_rs, fetch_data = self.connection.fetch(",".join(ids), request)
