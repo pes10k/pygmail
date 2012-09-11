@@ -1,6 +1,7 @@
 import re
 import string
 import message as gm
+import utilities as gu
 
 def page_from_list(a_list, limit, offset):
     """ Retreives the paginated section from the provided list
@@ -125,7 +126,7 @@ class GmailMailbox(object):
 
         """
         self.select()
-        rs, data = self.connection.search(None, '(BODY "%s")' % (term))
+        rs, data = self.connection.search(None, '(BODY "%s")' % (gu.quote(term)))
         if rs != "OK":
             return None
 
