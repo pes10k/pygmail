@@ -14,4 +14,4 @@ def quote(param):
     Returns:
         The same parameter, but escaped and safe to include in an IMAP command
     """
-    return param.replace("\\", "\\\\").replace(r'"', r"\"")
+    return param.replace("\\", "\\\\").replace('"', "\"")

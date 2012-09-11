@@ -126,7 +126,11 @@ class GmailMailbox(object):
 
         """
         self.select()
-        rs, data = self.connection.search(None, '(BODY "%s")' % (gu.quote(term)))
+        debug_string = "before (%s), after (%s)" % (
+            term, gu.quote(term)
+        )
+        quoted = gu.quote(term)
+        rs, data = self.connection.search(None, '(BODY "%s")' % (quoted))
         if rs != "OK":
             return None
 
