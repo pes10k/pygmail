@@ -27,5 +27,5 @@ a message:
 
 Author
 ---
-Written by Peter Snyder <snyderp@gmail.com> for Professor Chris Kanich in the BITS lab
+Written by Peter Snyder <snyderp@gmail.com> for Professor Chris Kanich in the [BITS lab](http://www.cs.uic.edu/Bits/)
 at the University of Illinois in Chicago
