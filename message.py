@@ -48,9 +48,9 @@ def encode_message_part(message_part, message_encoding):
     payload = message_part.get_payload(decode=True)
     encoding = message_encoding if not message_part.get_content_charset() else message_part.get_content_charset()
     if encoding and "utf-8" not in encoding:
-        return unicode(payload, encoding, errors='convert')
+        return unicode(payload, encoding, errors='replace')
     else:
-        return unicode(payload, "ascii", errors='convert')
+        return unicode(payload, "ascii", errors='replace')
 
 
 class GmailMessage(object):
