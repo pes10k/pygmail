@@ -3,6 +3,7 @@ import string
 import message as gm
 import utilities as gu
 
+
 def page_from_list(a_list, limit, offset):
     """ Retreives the paginated section from the provided list
 
@@ -166,6 +167,29 @@ class GmailMailbox(object):
         ids = string.split(data[0])
         ids_to_fetch = page_from_list(ids, limit, offset)
         return self.messages_by_id(ids_to_fetch), len(ids)
+
+    def fetch(self, uid):
+        """ Returns a single message from the mailbox by UID
+
+        Returns a single message object, representing the message in the current
+        mailbox with the specific UID
+
+        Arguments:
+            uid -- the numeric, unique identifier of the message in the mailbox
+
+        Returns:
+            A GmailMessage object representing the email message, or None if
+            none could be found
+        """
+        self.select()
+        request = '(UID FLAGS BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])'
+        fetch_rs, fetch_data = self.connection.uid("FETCH", uid, request)
+
+        if fetch_rs != "OK" or not fetch_data:
+            return None
+        for msg_parts in fetch_data[::-1]:
+            if len(msg_parts) > 1:
+                return gm.GmailMessage(msg_parts, self)
 
     def messages_by_id(self, ids):
         """ Fetches messages in the mailbox by their id

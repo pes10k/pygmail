@@ -3,6 +3,8 @@ import re
 import base64
 import email.utils
 from email.parser import HeaderParser
+import quopri
+import log
 
 
 def message_in_list(message, message_list):
@@ -27,6 +29,28 @@ def message_in_list(message, message_list):
         if message == a_message:
             return True
     return False
+
+
+def encode_message_part(message_part, message_encoding):
+    """ Returns the payload of a part of an email, encoded as UTF-8
+
+    Normalizes the text / contents of an email message to be UTF-8, regardless
+    of its original encoding
+
+    Arguments:
+        message_part     -- a section of an email message
+        message_encoding -- the advertised encoding of the entire message
+                            that this message part was a part of
+
+    Returns:
+        The payload of the email portion, encoded as UTF-8
+    """
+    payload = message_part.get_payload(decode=True)
+    encoding = message_encoding if not message_part.get_content_charset() else message_part.get_content_charset()
+    if encoding and "utf-8" not in encoding:
+        return unicode(payload, encoding, errors='convert')
+    else:
+        return unicode(payload, "ascii", errors='convert')
 
 
 class GmailMessage(object):
@@ -81,6 +105,7 @@ class GmailMessage(object):
         self.has_fetched_body = False
         self.raw = None
         self.sent_datetime = None
+        self.encoding = None
 
     def __eq__(self, other):
         """ Overrides equality operator to check by uid and mailbox name """
@@ -119,16 +144,17 @@ class GmailMessage(object):
             if status != "OK":
                 return None
             self.raw = email.message_from_string(data[0][1])
+            self.charset = self.raw.get_content_charset()
 
-        self.body_plain = ''
-        self.body_html = ''
+        self.body_plain = u''
+        self.body_html = u''
 
         for part in self.raw.walk():
             content_type = str(part.get_content_type())
             if content_type == 'text/plain':
-                self.body_plain += part.get_payload(decode=True)
+                self.body_plain += encode_message_part(part, self.charset)
             elif content_type == 'text/html':
-                self.body_html += part.get_payload(decode=True)
+                self.body_html += encode_message_part(part, self.charset)
 
         self.has_fetched_body = True
         return self.body_plain if self.body_html == "" else self.body_html
