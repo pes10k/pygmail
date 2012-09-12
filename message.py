@@ -3,8 +3,7 @@ import re
 import base64
 import email.utils
 from email.parser import HeaderParser
-import quopri
-import log
+import email.header as eh
 
 
 def message_in_list(message, message_list):
@@ -101,7 +100,7 @@ class GmailMessage(object):
         headers = GmailMessage.HEADER_PARSER.parsestr(message[1])
         self.date = headers["Date"]
         self.sender = headers["From"]
-        self.subject = None if "Subject" not in headers else headers["Subject"]
+        self.subject = None if "Subject" not in headers else eh.decode_header(headers["Subject"])[0][0]
         self.has_fetched_body = False
         self.raw = None
         self.sent_datetime = None
