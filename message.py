@@ -100,7 +100,15 @@ class GmailMessage(object):
         headers = GmailMessage.HEADER_PARSER.parsestr(message[1])
         self.date = headers["Date"]
         self.sender = headers["From"]
-        self.subject = None if "Subject" not in headers else eh.decode_header(headers["Subject"])[0][0]
+        if "Subject" not in headers:
+            self.subject = None
+        else:
+            raw_subject = headers["Subject"]
+            subject_parts = eh.decode_header(raw_subject)[0]
+            if subject_parts[1] is not None:
+                self.subject = unicode(subject_parts[0], subject_parts[1], errors='replace')
+            else:
+                self.subject = unicode(subject_parts[0], 'ascii', errors='replace')
         self.has_fetched_body = False
         self.raw = None
         self.sent_datetime = None
