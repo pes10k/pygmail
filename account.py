@@ -33,7 +33,15 @@ class GmailAccount(object):
         self.xoauth_string = xoauth_string
         self.password = password
         self.connected = False
+
+        # A reference to the last selected / stated mailbox in the current
+        # account.  This reference is kept so that we don't have to do
+        # redundant calls to the IMAP server re-selecting the current mailbox.
         self.last_viewed_mailbox = None
+
+        # A lazy-loaded collection of mailbox objects representing
+        # the mailboxes in the current account.
+        self.boxes = None
 
     def mailboxes(self):
         """ Returns a list of all mailboxes in the current account
@@ -43,12 +51,31 @@ class GmailAccount(object):
             in the IMAP account
 
         """
-        response_code, boxes_raw = self.connection().list()
-        mailboxes = []
-        for box in boxes_raw:
-            if "[" not in box:
-                mailboxes.append(mailbox.GmailMailbox(self, box))
-        return mailboxes
+        if self.boxes is None:
+            response_code, boxes_raw = self.connection().list()
+            self.boxes = []
+            for box in boxes_raw:
+                if "[" not in box:
+                    self.boxes.append(mailbox.GmailMailbox(self, box))
+        return self.boxes
+
+    def get(self, mailbox_name):
+        """ Returns the mailbox with a given name in the current account
+
+        Arguments:
+            mailbox_name -- The name of a mailbox to look for in the current
+                            account
+
+        Returns:
+            None if no mailbox matching the given name could be found.
+            Otherwise, returns the GmailMailbox object representing the
+            mailbox.
+
+        """
+        for mailbox in self.mailboxes():
+            if mailbox.name == mailbox_name:
+                return mailbox
+        return None
 
     def connection(self):
         """ Creates an authenticated connection to gmail over IMAP
