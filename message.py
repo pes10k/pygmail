@@ -7,7 +7,7 @@ import email.header as eh
 
 
 def message_in_list(message, message_list):
-    """ Checks to see if a Gmail message is represented in a list
+    """Checks to see if a Gmail message is represented in a list
 
     Checks to see if a list contains a message object representing the same
     message as another provided message object.  Since its possible for two
@@ -31,7 +31,7 @@ def message_in_list(message, message_list):
 
 
 def encode_message_part(message_part, message_encoding):
-    """ Returns the payload of a part of an email, encoded as UTF-8
+    """Returns the payload of a part of an email, encoded as UTF-8
 
     Normalizes the text / contents of an email message to be UTF-8, regardless
     of its original encoding
@@ -45,15 +45,18 @@ def encode_message_part(message_part, message_encoding):
         The payload of the email portion, encoded as UTF-8
     """
     payload = message_part.get_payload(decode=True)
-    encoding = message_encoding if not message_part.get_content_charset() else message_part.get_content_charset()
-    if encoding and "utf-8" not in encoding:
-        return unicode(payload, encoding, errors='replace')
+    if isinstance(payload, unicode):
+        return payload
     else:
-        return unicode(payload, "ascii", errors='replace')
+        encoding = message_encoding if not message_part.get_content_charset() else message_part.get_content_charset()
+        if encoding and "utf-8" not in encoding:
+            return unicode(payload, encoding, errors='replace')
+        else:
+            return unicode(payload, "ascii", errors='replace')
 
 
 class GmailMessage(object):
-    """ GmailMessage objects represent individual emails in a Gmail inbox.
+    """GmailMessage objects represent individual emails in a Gmail inbox.
 
     Clients should not need to create instances of this class directly, but
     should rely on instances of the GmailAccount class (and the related objects
@@ -78,7 +81,7 @@ class GmailMessage(object):
     HEADER_PARSER = HeaderParser()
 
     def __init__(self, message, mailbox):
-        """ Initilizer for GmailMessage objectrs
+        """Initilizer for GmailMessage objectrs
 
         Args:
             message  -- The tupple describing basic information about the
@@ -91,7 +94,7 @@ class GmailMessage(object):
         """
         self.mailbox = mailbox
         self.account = mailbox.account
-        self.connection = self.account.connection()
+        self.conn = self.account.connection
 
         self.id, self.uid, flags = GmailMessage.METADATA_PATTERN.match(message[0]).groups()
         self.flags = flags.split()
@@ -121,7 +124,7 @@ class GmailMessage(object):
             self.mailbox.name == other.mailbox.name)
 
     def fetch_body(self):
-        """ Returns the body of the email
+        """Returns the body of the email
 
         Fetches the body / main part of this email message.  Note that this
         doesn't currently fetch attachents (which are ignored)
@@ -143,7 +146,7 @@ class GmailMessage(object):
         # another network call to the IMAP server
         if self.raw is None:
             self.mailbox.select()
-            status, data = self.connection.uid(
+            status, data = self.conn().uid(
                 "FETCH",
                 self.uid,
                 "(RFC822)"
@@ -167,7 +170,7 @@ class GmailMessage(object):
         return self.body_plain if self.body_html == "" else self.body_html
 
     def html_body(self):
-        """ Returns the HTML version of the message body, if available
+        """Returns the HTML version of the message body, if available
 
         Lazy loads the HTML body of the email message from the server and
         returns the HTML version of the body, if one was provided
@@ -181,7 +184,7 @@ class GmailMessage(object):
         return None if self.body_html == "" else self.body_html
 
     def plain_body(self):
-        """ Returns the plain text version of the message body, if available
+        """Returns the plain text version of the message body, if available
 
         Lazy loads the plain text version of the email body from the IMAP
         server, if it hasn't already been brought down
@@ -195,7 +198,7 @@ class GmailMessage(object):
         return None if self.body_plain == "" else self.body_plain
 
     def raw_message(self):
-        """ Returns a representation of the message as a raw string
+        """Returns a representation of the message as a raw string
 
         Lazy loads the raw text version of the email message, if it hasn't
         already been fetched.
@@ -209,7 +212,7 @@ class GmailMessage(object):
         return None if self.raw is None else self.raw.as_string()
 
     def is_read(self):
-        """ Checks to see if the message has been flaged as read
+        """Checks to see if the message has been flaged as read
 
         Returns:
             True if the message is flagged as read, and otherwise False
@@ -218,7 +221,7 @@ class GmailMessage(object):
         return "\Seen" in self.flags
 
     def datetime(self):
-        """ Returns the date of when the message was sent
+        """Returns the date of when the message was sent
 
         Lazy-loads the date of when the message was sent (as a datetime object)
         based on the string date/time advertised in the email header
@@ -232,22 +235,21 @@ class GmailMessage(object):
         return self.sent_datetime
 
     def delete(self):
-        """ Deletes the message from the IMAP server
+        """Deletes the message from the IMAP server
 
         Returns:
             A reference to the current object
 
         """
-        connection = self.connection
         self.mailbox.select()
 
         # First move the message we're trying to delete to the gmail
         # trash.
-        connection.uid('COPY', self.uid, "[Gmail]/Trash")
+        self.conn().uid('COPY', self.uid, "[Gmail]/Trash")
 
         # Then delete the message from the current mailbox
-        connection.uid('STORE', self.uid, '+FLAGS', '(\Deleted)')
-        connection.expunge()
+        self.conn().uid('STORE', self.uid, '+FLAGS', '(\Deleted)')
+        self.conn().expunge()
 
         # Then, find the message we just added to the trash and mark that
         # to be deleted as well.
@@ -255,19 +257,19 @@ class GmailMessage(object):
         # @note there is a possible race condition here, since if someone else
         # sends us a message between when we did the above and below, we'll
         # end up deleting the wrong message
-        connection.select("[Gmail]/Trash")
+        self.conn().select("[Gmail]/Trash")
         delete_uid = connection.uid('SEARCH', None, 'All')[1][0].split()[-1]
         rs, data = connection.uid('STORE', delete_uid, '+FLAGS', '\\Deleted')
-        connection.expunge()
+        self.conn().expunge()
 
         # Last, reselect the current mailbox.  We do this directly, instead
         # of through the mailbox.select() method, since we didn't hand the
         # token off to the "Trash" mailbox above.
-        self.connection.select(self.mailbox.name)
+        self.conn().select(self.mailbox.name)
         return self
 
     def save(self):
-        """ Copies changes to the current message to the server
+        """Copies changes to the current message to the server
 
         Since we can't write to or update a message directly in IMAP, this
         method simulates the same effect by deleting the current message, and
@@ -282,16 +284,16 @@ class GmailMessage(object):
         self.delete()
         self.mailbox.select()
 
-        rs, data = self.connection.append(
+        rs, data = self.conn().append(
             self.mailbox.name,
-            " ".join(["(%s)" % flag for flag in self.flags]),
+            '(%s)' % ' '.join(self.flags),
             self.datetime(),
             self.raw_message()
         )
         return self
 
     def replace(self, find, replace):
-        """ Performs a body-wide string search and replace
+        """Performs a body-wide string search and replace
 
         Note that this search-and-replace is pretty dumb, and will fail
         in, for example, HTML messages where HTML tags would alter the search
@@ -319,7 +321,7 @@ class GmailMessage(object):
         return self
 
     def replace_re(self, regex, replace):
-        """ Replaces text in the body of the message with a RegEx
+        """Replaces text in the body of the message with a RegEx
 
         Note that this search-and-replace is pretty dumb, and will fail
         in, for example, HTML messages where HTML tags would alter the search

@@ -59,7 +59,6 @@ class GmailMailbox(object):
 
         """
         self.account = account
-        self.connection = account.connection()
         self.full_name = full_name
         self.name = GmailMailbox.NAME_PATTERN.match(full_name).groups()[2]
 
@@ -67,14 +66,14 @@ class GmailMailbox(object):
         return self.name
 
     def count(self):
-        """ Returns a count of the number of emails in the mailbox
+        """Returns a count of the number of emails in the mailbox
 
         Returns:
             The int value of the number of emails in the mailbox, or None on
             error
 
         """
-        rs, data = self.connection.select(self.name)
+        rs, data = self.account.connection().select(self.name)
         if rs == "OK":
             self.account.last_viewed_mailbox = self
             return GmailMailbox.COUNT_PATTERN.sub("", str(data))
@@ -82,7 +81,7 @@ class GmailMailbox(object):
             return None
 
     def select(self):
-        """ Sets this mailbox as the current active one on the IMAP connection
+        """Sets this mailbox as the current active one on the IMAP connection
 
         In order to make sure we don't make many many redundant calls to the
         IMAP server, we allow the account managing object to keep track
@@ -100,7 +99,7 @@ class GmailMailbox(object):
         return True
 
     def search(self, term, limit=100, offset=0):
-        """ Searches for messages in the inbox that contain a given phrase
+        """Searches for messages in the inbox that contain a given phrase
 
         Seaches for a given phrase in the current mailbox, and returns a list
         of messages that have the phrase in the HTML and/or plain text part
@@ -128,7 +127,7 @@ class GmailMailbox(object):
         """
         self.select()
         quoted = gu.quote(term)
-        rs, data = self.connection.search(None, '(BODY "%s")' % (quoted))
+        rs, data = self.account.connection().search(None, '(BODY "%s")' % (quoted))
         if rs != "OK":
             return None
 
@@ -137,7 +136,7 @@ class GmailMailbox(object):
         return self.messages_by_id(ids_to_fetch), len(ids)
 
     def messages(self, limit=100, offset=0):
-        """ Returns a list of all the messages in the inbox
+        """Returns a list of all the messages in the inbox
 
         Fetches a list of all messages in the inbox.  This list is by default
         limited to only the first 100 results, though pagination can trivially
@@ -157,7 +156,7 @@ class GmailMailbox(object):
 
         """
         self.select()
-        rs, data = self.connection.search(None, 'ALL')
+        rs, data = self.account.connection().search(None, 'ALL')
         if rs != "OK":
             return None
 
@@ -166,7 +165,7 @@ class GmailMailbox(object):
         return self.messages_by_id(ids_to_fetch), len(ids)
 
     def fetch(self, uid):
-        """ Returns a single message from the mailbox by UID
+        """Returns a single message from the mailbox by UID
 
         Returns a single message object, representing the message in the current
         mailbox with the specific UID
@@ -180,7 +179,7 @@ class GmailMailbox(object):
         """
         self.select()
         request = '(UID FLAGS BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])'
-        fetch_rs, fetch_data = self.connection.uid("FETCH", uid, request)
+        fetch_rs, fetch_data = self.account.connection().uid("FETCH", uid, request)
 
         if fetch_rs != "OK" or not fetch_data:
             return None
@@ -189,7 +188,7 @@ class GmailMailbox(object):
                 return gm.GmailMessage(msg_parts, self)
 
     def messages_by_id(self, ids):
-        """ Fetches messages in the mailbox by their id
+        """Fetches messages in the mailbox by their id
 
         Returns a list of all messages in the current mailbox that match
         any of the provided ids.
@@ -206,7 +205,7 @@ class GmailMailbox(object):
             return []
         self.select()
         request = '(UID FLAGS BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])'
-        fetch_rs, fetch_data = self.connection.fetch(",".join(ids), request)
+        fetch_rs, fetch_data = self.account.connection().fetch(",".join(ids), request)
 
         messages = []
         for msg_parts in fetch_data[::-1]:

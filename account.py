@@ -44,7 +44,7 @@ class GmailAccount(object):
         self.boxes = None
 
     def mailboxes(self):
-        """ Returns a list of all mailboxes in the current account
+        """Returns a list of all mailboxes in the current account
 
         Returns:
             A list of GmailMailbox objects, each representing one mailbox
@@ -60,7 +60,7 @@ class GmailAccount(object):
         return self.boxes
 
     def get(self, mailbox_name):
-        """ Returns the mailbox with a given name in the current account
+        """Returns the mailbox with a given name in the current account
 
         Arguments:
             mailbox_name -- The name of a mailbox to look for in the current
@@ -78,7 +78,7 @@ class GmailAccount(object):
         return None
 
     def connection(self):
-        """ Creates an authenticated connection to gmail over IMAP
+        """Creates an authenticated connection to gmail over IMAP
 
         Attempts to authenticate a connection with the gmail server using
         xoauth if a connection string has been provided, and otherwise using
@@ -122,5 +122,5 @@ class GmailAccount(object):
 
 
 class GmailAuthError(Exception):
-    """ An exeption signifying that an authentication attempt with the gmail
+    """An exeption signifying that an authentication attempt with the gmail
     server was not accepted."""
