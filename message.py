@@ -258,8 +258,8 @@ class GmailMessage(object):
         # sends us a message between when we did the above and below, we'll
         # end up deleting the wrong message
         self.conn().select("[Gmail]/Trash")
-        delete_uid = connection.uid('SEARCH', None, 'All')[1][0].split()[-1]
-        rs, data = connection.uid('STORE', delete_uid, '+FLAGS', '\\Deleted')
+        delete_uid = self.conn().uid('SEARCH', None, 'All')[1][0].split()[-1]
+        rs, data = self.conn().uid('STORE', delete_uid, '+FLAGS', '\\Deleted')
         self.conn().expunge()
 
         # Last, reselect the current mailbox.  We do this directly, instead

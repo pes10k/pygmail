@@ -24,7 +24,7 @@ class GmailAccount(object):
             password      -- The password to use when establishing
                              the connection
 
-        Args:
+        Arguments:
             email -- The email address of the account being connected to
 
         """
@@ -76,6 +76,26 @@ class GmailAccount(object):
             if mailbox.name == mailbox_name:
                 return mailbox
         return None
+
+    def call(self, callback, max_attempts=2):
+        """Makes a request to the IMAP server, and reconnects if needed
+
+        Makes call against the imap connection (wrapped in the given callback
+        lambda), but catches cases where the connection has died reconnects
+        if needed to the IMAP server.
+
+        Arguments:
+            callback -- A lambda that wraps an authenticated request against
+                        the IMAP connection
+
+        Keyword arguments:
+            max_attempts -- The maximum number of times to attempt to
+                            re-establish the connection with the IMAP server
+
+        Returns:
+            The result of the request, on success
+        """
+
 
     def connection(self):
         """Creates an authenticated connection to gmail over IMAP
