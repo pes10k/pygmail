@@ -12,7 +12,7 @@ a message:
 
     gmail_account = "example@gmail.com"
     gmail_password = "examplepw"
-    account = GMAccount.GmailAccount(gmail_account, password=gmail_password)
+    account = pygmail.GmailAccount(gmail_account, password=gmail_password)
 
     print "Account includes the following mailboxes:"
 
