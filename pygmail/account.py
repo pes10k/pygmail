@@ -6,23 +6,30 @@ class GmailAccount(object):
     """Represents a connection with a Google Mail account
 
     Instances of this class each wrap a connection to a gmail account,
-    connected over IMAP_SSL.  This connection can either be established
-    using a user / pass combination or xoauth.  If an xoauth string IMAP_SSL
-    provided at initilization, xoauth will be used for the connection.
-    Otherwise, a standard user/pass will be used.
+    connected over IMAP_SSL.  This connection can either established in
+    any of the three methods Google currently supports:
+        - standard password
+        - XOauth
+        - OAuth2
+
+    Note that the first two methods are currently depreciated by Google and will
+    be removed in the future, so better to get on the OAuth2 train.
 
     """
 
     HOST = "imap.googlemail.com"
 
-    def __init__(self, email, xoauth_string=None, password=None):
-        """ Creates a GmailAccount Instances
+    def __init__(self, email, xoauth_string=None, password=None, oauth2_token=None):
+        """Creates a GmailAccount Instances
 
         Keyword arguments:
-            xoauth_string -- The xoauth connection string for connecting with
-                             the account (default: None)
-            password      -- The password to use when establishing
-                             the connection
+            xoauth_string  -- The xoauth connection string for connecting with
+                              the account using XOauth (default: None)
+            password       -- The password to use when establishing
+                              the connection when using the user/pass auth
+                              method (default: None)
+            oauth2_token   -- An OAuth2 access token for use when connecting
+                              with the given email address (default: None)
 
         Arguments:
             email -- The email address of the account being connected to
@@ -31,6 +38,7 @@ class GmailAccount(object):
         self.email = email
         self.conn = imaplib.IMAP4_SSL(GmailAccount.HOST)
         self.xoauth_string = xoauth_string
+        self.oauth2_token = oauth2_token
         self.password = password
         self.connected = False
 
@@ -96,7 +104,6 @@ class GmailAccount(object):
             The result of the request, on success
         """
 
-
     def connection(self):
         """Creates an authenticated connection to gmail over IMAP
 
@@ -117,14 +124,22 @@ class GmailAccount(object):
 
         """
         if not self.connected:
-            if self.password:
+            if self.oauth2_token:
+                auth_params = self.email, self.oauth2_token
+                xoauth2_string = 'user=%s\1auth=Bearer %s\1\1' % auth_params
+                rs = self.conn.authenticate(
+                    "XOAUTH2",
+                    lambda x: xoauth2_string
+                )
+                if rs[0] != "OK":
+                    error = "User / OAuth2 token (%s, %s) were not accepted" % (
+                        self.email, self.oauth2_token)
+                    raise GmailAuthError(error)
+            elif self.password:
                 rs = self.conn.login(self.email, self.password)
                 if rs[0] != "OK":
                     error = "User / Pass (%s, %s) were not accepted : %s" % (
-                        self.email,
-                        self.password,
-                        rs[0]
-                    )
+                        self.email, self.password, rs[0])
                     raise GmailAuthError(error)
             else:
                 rs = self.conn.authenticate(
@@ -133,9 +148,7 @@ class GmailAccount(object):
                 )
                 if rs[0] != "OK":
                     error = "User / XOAUTH (%s, %s) were not accepted" % (
-                        self.email,
-                        self.xoauth_string
-                    )
+                        self.email, self.xoauth_string)
                     raise GmailAuthError(error)
         self.connected = True
         return self.conn
