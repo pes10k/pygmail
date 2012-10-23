@@ -16,9 +16,10 @@ def message_in_list(message, message_list):
     effective same thing.
 
     Arguments:
-        message      -- a GmailMessage object, reperesenting an email message
-        message_list -- a python list, containg zero or more GmailMessage
-                        objects
+        message      -- a pygmail.message.Message object, reperesenting an email
+                        message
+        message_list -- a python list, containg zero or more
+                        pygmail.message.Message objects
 
     Returns:
         True if the list contains an object representing the same message
@@ -55,13 +56,13 @@ def encode_message_part(message_part, message_encoding):
             return unicode(payload, "ascii", errors='replace')
 
 
-class GmailMessage(object):
-    """GmailMessage objects represent individual emails in a Gmail inbox.
+class Message(object):
+    """Message objects represent individual emails in a Gmail inbox.
 
     Clients should not need to create instances of this class directly, but
-    should rely on instances of the GmailAccount class (and the related objects
-    returned from the mailbox() methods) to load and provide GmailMessage
-    instances as needed.
+    should rely on instances of the pygmail.account.Account class (and the
+    related objects returned from the mailbox() methods) to load and provide
+    pygmail.message.Message instances as needed.
 
     Instances have zero or more of the following properties:
         id      -- an identifier of this email
@@ -81,26 +82,26 @@ class GmailMessage(object):
     HEADER_PARSER = HeaderParser()
 
     def __init__(self, message, mailbox):
-        """Initilizer for GmailMessage objectrs
+        """Initilizer for pgmail.message.Message objects
 
         Args:
             message  -- The tupple describing basic information about the
                         message.  The first index should contain metadata
                         informattion (eg message's uid), and the second
                         index contains header information (date, subject, etc.)
-            mailbox  -- Reference to a GmailMailbox object that represents the
-                        mailbox this message exists in
+            mailbox  -- Reference to a pygmail.mailbox.Mailbox object that
+                        represents the mailbox this message exists in
 
         """
         self.mailbox = mailbox
         self.account = mailbox.account
         self.conn = self.account.connection
 
-        self.id, self.uid, flags = GmailMessage.METADATA_PATTERN.match(message[0]).groups()
+        self.id, self.uid, flags = Message.METADATA_PATTERN.match(message[0]).groups()
         self.flags = flags.split()
 
         ### First parse out the metadata about the email message
-        headers = GmailMessage.HEADER_PARSER.parsestr(message[1])
+        headers = Message.HEADER_PARSER.parsestr(message[1])
         self.date = headers["Date"]
         self.sender = headers["From"]
         if "Subject" not in headers:
@@ -119,7 +120,7 @@ class GmailMessage(object):
 
     def __eq__(self, other):
         """ Overrides equality operator to check by uid and mailbox name """
-        return (isinstance(other, GmailMessage) and
+        return (isinstance(other, Message) and
             self.uid == other.uid and
             self.mailbox.name == other.mailbox.name)
 

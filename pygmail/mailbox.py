@@ -38,11 +38,11 @@ def page_from_list(a_list, limit, offset):
         return a_list[first_elm_index:last_elm_index]
 
 
-class GmailMailbox(object):
+class Mailbox(object):
     """Represents a single mailbox within a gmail account
 
     Instances of this class are not intended to be initilized directly, but
-    instead managed by a gmail.GmailAccount Instances
+    instead managed by a pygmail.account.Account instances
 
     """
 
@@ -57,15 +57,15 @@ class GmailMailbox(object):
         """ Initilizes a mailbox object
 
         Args:
-            account      -- An initilized GmailAccount object, which represents
-                            the gmail account this mailbox exists in
+            account      -- An initilized pygmail.account.Account object, which
+                            represents the gmail account this mailbox exists in
             mailbox_name -- The full name of the mailbox, in IMAP format, not
                             in easy, human readable format
 
         """
         self.account = account
         self.full_name = full_name
-        self.name = GmailMailbox.NAME_PATTERN.match(full_name).groups()[2]
+        self.name = Mailbox.NAME_PATTERN.match(full_name).groups()[2]
 
     def __str__(self):
         return self.name
@@ -81,7 +81,7 @@ class GmailMailbox(object):
         rs, data = self.account.connection().select(self.name)
         if rs == "OK":
             self.account.last_viewed_mailbox = self
-            return GmailMailbox.COUNT_PATTERN.sub("", str(data))
+            return Mailbox.COUNT_PATTERN.sub("", str(data))
         else:
             return None
 
@@ -126,10 +126,10 @@ class GmailMailbox(object):
 
         Returns:
             A two index tupple.  The element in the first index is a
-            list of zero or more GmailMessage objects (or uids if only_uids is
-            TRUE), or None if no information could be found about the mailbox.
-            The second element is the total number of messages (not just those
-            returned from the limit-offset parameters)
+            list of zero or more pygmail.message.Message objects (or uids if
+            only_uids is TRUE), or None if no information could be found about
+            the mailbox. The second element is the total number of messages (not
+            just those returned from the limit-offset parameters)
 
         """
         self.select()
@@ -164,10 +164,10 @@ class GmailMailbox(object):
         Return:
 
             A two index tupple.  The element in the first index is a
-            list of zero or more GmailMessage objects (or uids if only_uids is
-            TRUE), or None if no information could be found about the mailbox.
-            The second element is the total number of messages (not just those
-            returned from the limit-offset parameters)
+            list of zero or more pygmail.message.Message objects (or uids if
+            only_uids is TRUE), or None if no information could be found about
+            the mailbox. The second element is the total number of messages (not
+            just those returned from the limit-offset parameters)
 
         """
         self.select()
@@ -191,8 +191,8 @@ class GmailMailbox(object):
             uids -- A list of zero or more email uids
 
         Returns:
-            Zero or more GmailMessage objects, representing any messages
-            that matched a provided uid
+            Zero or more pygmail.message.Message objects, representing any
+            messages that matched a provided uid
         """
         self.select()
         request = '(UID FLAGS BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])'
@@ -201,7 +201,7 @@ class GmailMailbox(object):
 
         if fetch_rs != "OK" or not fetch_data:
             return None
-        return [gm.GmailMessage(msg_parts, self) for msg_parts in fetch_data[::-1] if len(msg_parts) > 1]
+        return [gm.Message(msg_parts, self) for msg_parts in fetch_data[::-1] if len(msg_parts) > 1]
 
     def fetch(self, uid):
         """Returns a single message from the mailbox by UID
@@ -213,8 +213,8 @@ class GmailMailbox(object):
             uid -- the numeric, unique identifier of the message in the mailbox
 
         Returns:
-            A GmailMessage object representing the email message, or None if
-            none could be found
+            A pygmail.message.Message object representing the email message, or
+            None if none could be found
         """
         self.select()
         request = '(UID FLAGS BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])'
@@ -225,7 +225,7 @@ class GmailMailbox(object):
             return None
         for msg_parts in fetch_data[::-1]:
             if len(msg_parts) > 1:
-                return gm.GmailMessage(msg_parts, self)
+                return gm.Message(msg_parts, self)
 
     def messages_by_id(self, ids, only_uids=False):
         """Fetches messages in the mailbox by their id
@@ -262,5 +262,5 @@ class GmailMailbox(object):
             messages = []
             for msg_parts in fetch_data[::-1]:
                 if len(msg_parts) > 1:
-                    messages.append(gm.GmailMessage(msg_parts, self))
+                    messages.append(gm.Message(msg_parts, self))
             return messages

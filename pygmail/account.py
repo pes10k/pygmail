@@ -3,7 +3,7 @@ import mailbox
 from string import split
 
 
-class GmailAccount(object):
+class Account(object):
     """Represents a connection with a Google Mail account
 
     Instances of this class each wrap a connection to a gmail account,
@@ -21,7 +21,7 @@ class GmailAccount(object):
     HOST = "imap.googlemail.com"
 
     def __init__(self, email, xoauth_string=None, password=None, oauth2_token=None):
-        """Creates a GmailAccount Instances
+        """Creates an Account instances
 
         Keyword arguments:
             xoauth_string  -- The xoauth connection string for connecting with
@@ -37,7 +37,7 @@ class GmailAccount(object):
 
         """
         self.email = email
-        self.conn = imaplib.IMAP4_SSL(GmailAccount.HOST)
+        self.conn = imaplib.IMAP4_SSL(Account.HOST)
         self.xoauth_string = xoauth_string
         self.oauth2_token = oauth2_token
         self.password = password
@@ -53,7 +53,7 @@ class GmailAccount(object):
         self.boxes = None
 
     def __del__(self):
-        """Close the IMAP connection to GMail when the object is being destroyed"""
+        """Close the IMAP connection when the object is being destroyed"""
         if self.last_viewed_mailbox:
             self.close()
 
@@ -64,8 +64,8 @@ class GmailAccount(object):
         """Returns a list of all mailboxes in the current account
 
         Returns:
-            A list of GmailMailbox objects, each representing one mailbox
-            in the IMAP account
+            A list of pygmail.mailbox.Mailbox objects, each representing one
+            mailbox in the IMAP account
 
         """
         if self.boxes is None:
@@ -73,7 +73,7 @@ class GmailAccount(object):
             self.boxes = []
             for box in boxes_raw:
                 if "[" not in box:
-                    self.boxes.append(mailbox.GmailMailbox(self, box))
+                    self.boxes.append(mailbox.Mailbox(self, box))
         return self.boxes
 
     def get(self, mailbox_name):
@@ -85,33 +85,14 @@ class GmailAccount(object):
 
         Returns:
             None if no mailbox matching the given name could be found.
-            Otherwise, returns the GmailMailbox object representing the
-            mailbox.
+            Otherwise, returns the pygmail.mailbox.Mailbox object representing
+            the mailbox.
 
         """
         for mailbox in self.mailboxes():
             if mailbox.name == mailbox_name:
                 return mailbox
         return None
-
-    #def call(self, callback, max_attempts=2):
-        """Makes a request to the IMAP server, and reconnects if needed
-
-        Makes call against the imap connection (wrapped in the given callback
-        lambda), but catches cases where the connection has died reconnects
-        if needed to the IMAP server.
-
-        Arguments:
-            callback -- A lambda that wraps an authenticated request against
-                        the IMAP connection
-
-        Keyword arguments:
-            max_attempts -- The maximum number of times to attempt to
-                            re-establish the connection with the IMAP server
-
-        Returns:
-            The result of the request, on success
-        """
 
     def connection(self):
         """Creates an authenticated connection to gmail over IMAP
@@ -128,8 +109,8 @@ class GmailAccount(object):
             True if the connection was successfully authenticated, and
             otherwise False
         Raises:
-            GmailAuthError, if the given connection parameters are not accepted
-            by the Gmail server
+            pygmail.account.AuthError, if the given connection parameters are
+            not accepted by the Gmail server
 
         """
         if not self.connected:
@@ -141,13 +122,13 @@ class GmailAccount(object):
                 if rs[0] != "OK":
                     error = "User / OAuth2 token (%s, %s) were not accepted" % (
                         self.email, self.oauth2_token)
-                    raise GmailAuthError(error)
+                    raise AuthError(error)
             elif self.password:
                 rs = self.conn.login(self.email, self.password)
                 if rs[0] != "OK":
                     error = "User / Pass (%s, %s) were not accepted : %s" % (
                         self.email, self.password, rs[0])
-                    raise GmailAuthError(error)
+                    raise AuthError(error)
             else:
                 rs = self.conn.authenticate(
                     "XOAUTH",
@@ -156,7 +137,7 @@ class GmailAccount(object):
                 if rs[0] != "OK":
                     error = "User / XOAUTH (%s, %s) were not accepted" % (
                         self.email, self.xoauth_string)
-                    raise GmailAuthError(error)
+                    raise AuthError(error)
         self.connected = True
         return self.conn
 
@@ -184,6 +165,6 @@ class GmailAccount(object):
         return None if rs != "OK" else split(data[0], " ")
 
 
-class GmailAuthError(Exception):
+class AuthError(Exception):
     """An exeption signifying that an authentication attempt with the gmail
     server was not accepted."""

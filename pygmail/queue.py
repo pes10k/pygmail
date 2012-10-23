@@ -1,6 +1,6 @@
 from threading import Thread
 from Queue import Queue
-from pygmail.account import GmailAccount
+from pygmail.account import Account
 import uuid
 
 
@@ -15,7 +15,7 @@ class ConnectionQueue(object):
     This thread pool executes work on a FIFO basis
 
     """
-    def __init__(self, account, num_threads=4):
+    def __init__(self, account, num_threads=8):
         """Creates a thread pool of connections identical to the given account
 
         Named Arguments:
@@ -45,7 +45,7 @@ class ConnectionQueue(object):
         self.threads_exist = False
         self.connections = []
         for i in range(num_threads):
-            account = GmailAccount(email, xoauth_string=xoauth_string,
+            account = Account(email, xoauth_string=xoauth_string,
                 password=password, oauth2_token=oauth2_token)
             account.connection()
             self.connections.append(account)
