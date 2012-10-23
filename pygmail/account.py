@@ -1,5 +1,6 @@
 import imaplib
 import mailbox
+from string import split
 
 
 class GmailAccount(object):
@@ -51,6 +52,14 @@ class GmailAccount(object):
         # the mailboxes in the current account.
         self.boxes = None
 
+    def __del__(self):
+        """Close the IMAP connection to GMail when the object is being destroyed"""
+        if self.last_viewed_mailbox:
+            self.close()
+
+        if self.connected:
+            self.conn.logout()
+
     def mailboxes(self):
         """Returns a list of all mailboxes in the current account
 
@@ -85,7 +94,7 @@ class GmailAccount(object):
                 return mailbox
         return None
 
-    def call(self, callback, max_attempts=2):
+    #def call(self, callback, max_attempts=2):
         """Makes a request to the IMAP server, and reconnects if needed
 
         Makes call against the imap connection (wrapped in the given callback
@@ -127,10 +136,8 @@ class GmailAccount(object):
             if self.oauth2_token:
                 auth_params = self.email, self.oauth2_token
                 xoauth2_string = 'user=%s\1auth=Bearer %s\1\1' % auth_params
-                rs = self.conn.authenticate(
-                    "XOAUTH2",
-                    lambda x: xoauth2_string
-                )
+                print xoauth2_string
+                rs = self.conn.authenticate("XOAUTH2", lambda x: xoauth2_string)
                 if rs[0] != "OK":
                     error = "User / OAuth2 token (%s, %s) were not accepted" % (
                         self.email, self.oauth2_token)
@@ -152,6 +159,29 @@ class GmailAccount(object):
                     raise GmailAuthError(error)
         self.connected = True
         return self.conn
+
+    def close(self):
+        """Closes the IMAP connection to GMail
+
+        Closes and logs out of the IMAP connection to GMail.
+
+        Returns:
+            Reference to the current object
+        """
+        self.conn.close()
+
+    def info(self):
+        """Returns information about the GMail IMAP server
+
+        Returns information about the GMail IMAP server, including capabilities
+        and protocol information.
+
+        Return:
+            A list of each capability advertised but the IMAP server, or
+            None if an error occured
+        """
+        rs, data = self.connection().capability()
+        return None if rs != "OK" else split(data[0], " ")
 
 
 class GmailAuthError(Exception):
