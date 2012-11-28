@@ -118,7 +118,7 @@ class Mailbox(object):
             term -- the search term to search for in the current mailbox
 
         Keyword arguments:
-            limit  -- The maximum number of messages to return
+            limit     -- The maximum number of messages to return
             offset    -- The first message to return out of the entire set of
                          messages in the inbox
             only_uids -- If True, only the UIDs of the matching messages will
@@ -201,7 +201,7 @@ class Mailbox(object):
 
         if fetch_rs != "OK" or not fetch_data:
             return None
-        return [gm.Message(msg_parts, self) for msg_parts in fetch_data[::-1] if len(msg_parts) > 1]
+        return [gm.Message(msg_parts, self) for msg_parts in fetch_data[::-1] if msg_parts is not None and len(msg_parts) > 1]
 
     def fetch(self, uid):
         """Returns a single message from the mailbox by UID

@@ -4,6 +4,7 @@ import base64
 import email.utils
 from email.parser import HeaderParser
 import email.header as eh
+import sys
 
 
 def message_in_list(message, message_list):
@@ -78,6 +79,10 @@ class Message(object):
     # of the raw IMAP returned string.
     METADATA_PATTERN = re.compile(r'(\d*) \(UID (\d*) FLAGS \((.*)\)\s')
 
+    # A similar regular expression used for extracting metadata when the
+    # message doesn't contain any flags
+    METADATA_PATTERN_NOFLAGS = re.compile(r'(\d*) \(UID (\d*)\s')
+
     # Single, class-wide reference to an email header parser
     HEADER_PARSER = HeaderParser()
 
@@ -97,8 +102,15 @@ class Message(object):
         self.account = mailbox.account
         self.conn = self.account.connection
 
-        self.id, self.uid, flags = Message.METADATA_PATTERN.match(message[0]).groups()
-        self.flags = flags.split()
+        match_rs = Message.METADATA_PATTERN.match(message[0])
+
+        if match_rs is None:
+            match_short_rs = Message.METADATA_PATTERN_NOFLAGS.match(message[0])
+            self.id, self.uid = match_short_rs.groups()
+            self.flags = []
+        else:
+            self.id, self.uid, flags = match_rs.groups()
+            self.flags = flags.split()
 
         ### First parse out the metadata about the email message
         headers = Message.HEADER_PARSER.parsestr(message[1])
@@ -147,25 +159,28 @@ class Message(object):
         # another network call to the IMAP server
         if self.raw is None:
             self.mailbox.select()
-            status, data = self.conn().uid(
-                "FETCH",
-                self.uid,
-                "(RFC822)"
-            )
+            status, data = self.conn().uid("FETCH", self.uid, "(RFC822)")
             if status != "OK":
                 return None
-            self.raw = email.message_from_string(data[0][1])
-            self.charset = self.raw.get_content_charset()
+            try:
+                self.raw = email.message_from_string(data[0][1])
+                self.charset = self.raw.get_content_charset()
+            except:
+                print "BAD MESSAGE"
+                print "UID: " + self.uid
+                print data
+                sys.exit()
 
         self.body_plain = u''
         self.body_html = u''
 
-        for part in self.raw.walk():
-            content_type = str(part.get_content_type())
-            if content_type == 'text/plain':
-                self.body_plain += encode_message_part(part, self.charset)
-            elif content_type == 'text/html':
-                self.body_html += encode_message_part(part, self.charset)
+        if self.raw is not None:
+            for part in self.raw.walk():
+                content_type = str(part.get_content_type())
+                if content_type == 'text/plain':
+                    self.body_plain += encode_message_part(part, self.charset)
+                elif content_type == 'text/html':
+                    self.body_html += encode_message_part(part, self.charset)
 
         self.has_fetched_body = True
         return self.body_plain if self.body_html == "" else self.body_html

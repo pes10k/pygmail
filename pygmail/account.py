@@ -1,4 +1,4 @@
-import imaplib
+import imaplib2
 import mailbox
 from string import split
 
@@ -37,7 +37,7 @@ class Account(object):
 
         """
         self.email = email
-        self.conn = imaplib.IMAP4_SSL(Account.HOST)
+        self.conn = imaplib2.IMAP4_SSL(Account.HOST)
         self.xoauth_string = xoauth_string
         self.oauth2_token = oauth2_token
         self.password = password
@@ -54,9 +54,6 @@ class Account(object):
 
     def __del__(self):
         """Close the IMAP connection when the object is being destroyed"""
-        if self.last_viewed_mailbox:
-            self.close()
-
         if self.connected:
             self.conn.logout()
 
@@ -117,7 +114,7 @@ class Account(object):
             if self.oauth2_token:
                 auth_params = self.email, self.oauth2_token
                 xoauth2_string = 'user=%s\1auth=Bearer %s\1\1' % auth_params
-                print xoauth2_string
+                print "Connecting with " + xoauth2_string
                 rs = self.conn.authenticate("XOAUTH2", lambda x: xoauth2_string)
                 if rs[0] != "OK":
                     error = "User / OAuth2 token (%s, %s) were not accepted" % (
@@ -149,7 +146,10 @@ class Account(object):
         Returns:
             Reference to the current object
         """
-        self.conn.close()
+        if self.last_viewed_mailbox:
+            self.conn.close()
+        self.conn.logout()
+        self.connected = False
 
     def info(self):
         """Returns information about the GMail IMAP server
