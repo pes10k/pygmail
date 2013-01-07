@@ -1,6 +1,7 @@
-import imaplib2
 import mailbox
 from string import split
+import logging
+import imaplib2
 
 
 class Account(object):
@@ -24,11 +25,6 @@ class Account(object):
         """Creates an Account instances
 
         Keyword arguments:
-            xoauth_string  -- The xoauth connection string for connecting with
-                              the account using XOauth (default: None)
-            password       -- The password to use when establishing
-                              the connection when using the user/pass auth
-                              method (default: None)
             oauth2_token   -- An OAuth2 access token for use when connecting
                               with the given email address (default: None)
 
@@ -38,9 +34,7 @@ class Account(object):
         """
         self.email = email
         self.conn = imaplib2.IMAP4_SSL(Account.HOST)
-        self.xoauth_string = xoauth_string
         self.oauth2_token = oauth2_token
-        self.password = password
         self.connected = False
 
         # A reference to the last selected / stated mailbox in the current
@@ -57,6 +51,12 @@ class Account(object):
         if self.connected:
             self.conn.logout()
 
+    def __getstate__(self):
+        props = self.__dict__
+        del props['conn']
+        props['connected'] = False
+        return props
+
     def mailboxes(self):
         """Returns a list of all mailboxes in the current account
 
@@ -67,10 +67,15 @@ class Account(object):
         """
         if self.boxes is None:
             response_code, boxes_raw = self.connection().list()
+            if response_code is None or boxes_raw[0] is None:
+                logging.getLogger().error("Empty mailboxes response")
+                self.reconnect()
+                return self.mailboxes()
             self.boxes = []
             for box in boxes_raw:
                 if "[" not in box:
                     self.boxes.append(mailbox.Mailbox(self, box))
+        logging.getLogger().info(" !! Got %d nice mailboxes" % (len(self.boxes),))
         return self.boxes
 
     def get(self, mailbox_name):
@@ -88,8 +93,17 @@ class Account(object):
         """
         for mailbox in self.mailboxes():
             if mailbox.name == mailbox_name:
+                logging.getLogger().info(" ** found: " + mailbox_name)
                 return mailbox
+        logging.getLogger().error(" ** Couldn't find: " + mailbox_name)
         return None
+
+    def reconnect(self):
+        self.close()
+        self.connected = False
+        self.last_viewed_mailbox = False
+        self.boxes = None
+        return self.connection()
 
     def connection(self):
         """Creates an authenticated connection to gmail over IMAP
@@ -119,21 +133,6 @@ class Account(object):
                 if rs[0] != "OK":
                     error = "User / OAuth2 token (%s, %s) were not accepted" % (
                         self.email, self.oauth2_token)
-                    raise AuthError(error)
-            elif self.password:
-                rs = self.conn.login(self.email, self.password)
-                if rs[0] != "OK":
-                    error = "User / Pass (%s, %s) were not accepted : %s" % (
-                        self.email, self.password, rs[0])
-                    raise AuthError(error)
-            else:
-                rs = self.conn.authenticate(
-                    "XOAUTH",
-                    lambda x: self.xoauth_string
-                )
-                if rs[0] != "OK":
-                    error = "User / XOAUTH (%s, %s) were not accepted" % (
-                        self.email, self.xoauth_string)
                     raise AuthError(error)
         self.connected = True
         return self.conn

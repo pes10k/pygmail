@@ -5,6 +5,7 @@ import email.utils
 from email.parser import HeaderParser
 import email.header as eh
 import sys
+import logging
 
 
 def message_in_list(message, message_list):
@@ -116,6 +117,8 @@ class Message(object):
         headers = Message.HEADER_PARSER.parsestr(message[1])
         self.date = headers["Date"]
         self.sender = headers["From"]
+        self.to = headers["To"]
+        self.cc = headers["Cc"]
         if "Subject" not in headers:
             self.subject = None
         else:
@@ -130,13 +133,18 @@ class Message(object):
         self.sent_datetime = None
         self.encoding = None
 
+    def __getstate__(self):
+        props = self.__dict__
+        del props['conn']
+        return props
+
     def __eq__(self, other):
         """ Overrides equality operator to check by uid and mailbox name """
         return (isinstance(other, Message) and
             self.uid == other.uid and
             self.mailbox.name == other.mailbox.name)
 
-    def fetch_body(self):
+    def fetch_body(self, resync=False):
         """Returns the body of the email
 
         Fetches the body / main part of this email message.  Note that this
@@ -154,22 +162,26 @@ class Message(object):
         if self.has_fetched_body:
             return self.body_plain if self.body_html == "" else self.body_html
 
+        print " - Fetching message %s" % (self.uid,)
+
         # Next, also check to see if we at least have a reference to the
         # raw, underlying email message object, in which case we can save
         # another network call to the IMAP server
         if self.raw is None:
-            self.mailbox.select()
+            self.mailbox.select(force=resync)
             status, data = self.conn().uid("FETCH", self.uid, "(RFC822)")
-            if status != "OK":
-                return None
-            try:
-                self.raw = email.message_from_string(data[0][1])
-                self.charset = self.raw.get_content_charset()
-            except:
-                print "BAD MESSAGE"
-                print "UID: " + self.uid
+            # When we get an empty response back from gmail,
+            # we just stop parsing the body and try again
+            if status is None or data[0] is None:
+                self.account.reconnect()
+                logging.getLogger().error("Empty response on: " + self.uid)
+                return self.fetch_body()
+            elif type(data[0]) is str:
+                logging.getLogger().error("bad message something: " + data[0])
                 print data
                 sys.exit()
+            self.raw = email.message_from_string(data[0][1])
+            self.charset = self.raw.get_content_charset()
 
         self.body_plain = u''
         self.body_html = u''

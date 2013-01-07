@@ -85,7 +85,7 @@ class Mailbox(object):
         else:
             return None
 
-    def select(self):
+    def select(self, force=False):
         """Sets this mailbox as the current active one on the IMAP connection
 
         In order to make sure we don't make many many redundant calls to the
@@ -97,7 +97,7 @@ class Mailbox(object):
             True if any changes were made, otherwise False
 
         """
-        if self is self.account.last_viewed_mailbox:
+        if self is self.account.last_viewed_mailbox and force is False:
             return False
         self.count()
         self.account.last_viewed_mailbox = self
@@ -139,7 +139,7 @@ class Mailbox(object):
         rs, data = conn.search(None, search_phrase)
 
         if rs != "OK":
-            return None
+            return None, None
 
         ids = string.split(data[0])
         ids_to_fetch = page_from_list(ids, limit, offset)
@@ -174,7 +174,7 @@ class Mailbox(object):
         conn = self.account.connection()
         rs, data = conn.search(None, 'ALL')
         if rs != "OK":
-            return None
+            return None, None
 
         ids = string.split(data[0])
         ids_to_fetch = page_from_list(ids, limit, offset)
