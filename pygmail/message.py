@@ -87,7 +87,7 @@ class Message(object):
     # Single, class-wide reference to an email header parser
     HEADER_PARSER = HeaderParser()
 
-    def __init__(self, message, mailbox, full_body=False):
+    def __init__(self, message, mailbox, full_body=False, flags=None):
         """Initilizer for pgmail.message.Message objects
 
         Args:
@@ -104,10 +104,12 @@ class Message(object):
         self.conn = self.account.connection
         match_rs = Message.METADATA_PATTERN.match(message[0])
 
+        # If we're loading from a full RFC822 asked for message, the flags
+        # come not in the header string, but at the end of the message
         if not match_rs:
             match_short_rs = Message.METADATA_PATTERN_NOFLAGS.match(message[0])
             self.id, self.gmail_id, self.uid = match_short_rs.groups()
-            self.flags = []
+            self.flags = flags[-1].split() if flags else []
         else:
             self.id, self.gmail_id, self.uid, flags = match_rs.groups()
             self.flags = flags.split()
@@ -386,7 +388,6 @@ class Message(object):
                     callback=GA.add_loop_cb(_on_message_moved))
 
             def _on_mailbox_select(msg_count):
-
                 self.conn(callback=GA.add_loop_cb(_on_received_connection))
 
             self.mailbox.select(callback=GA.add_loop_cb(_on_mailbox_select))
@@ -407,7 +408,7 @@ class Message(object):
             def _save_received_connection(connection):
                 connection.append(
                     self.mailbox.name,
-                    '(%s)' % ' '.join(self.flags),
+                    '(%s)' % ' '.join(self.flags) if len(self.flags) > 1 else "",
                     self.datetime(),
                     self.raw_message(),
                     callback=GA.add_loop_cb(callback)
@@ -430,7 +431,7 @@ class Message(object):
 
             rs, data = self.conn().append(
                 self.mailbox.name,
-                '(%s)' % ' '.join(self.flags),
+                '(%s)' % ' '.join(self.flags) if len(self.flags) > 1 else "",
                 self.datetime(),
                 self.raw_message()
             )

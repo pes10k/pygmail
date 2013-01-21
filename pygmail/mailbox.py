@@ -5,6 +5,22 @@ import utilities as gu
 import account as ga
 
 
+def parse_fetch_request(response, size=2):
+    length = len(response)
+    if length % size != 0:
+        raise Exception("Invalid chunk size requested, %d sized chunks from %d sized list" % (size, length))
+    else:
+        i = 0
+        while i < length:
+            item = []
+            j = 0
+            while j < size:
+                item.append(response[length - 1 - i - j])
+                j += 1
+            i += size
+            yield item
+
+
 def page_from_list(a_list, limit, offset):
     """ Retreives the paginated section from the provided list
 
@@ -239,14 +255,14 @@ class Mailbox(object):
                 ga.loop_cb_args(callback, None)
             else:
                 messages = []
-                for msg_parts in data[::-1]:
-                    if len(msg_parts) > 1:
-                        messages.append(gm.Message(msg_parts, self, full_body=include_body))
+                for msg_parts in parse_fetch_request(data):
+                    flags, body = msg_parts
+                    messages.append(gm.Message(body, self, full_body=include_body, flags=flags))
                 ga.loop_cb_args(callback, messages)
 
         def _on_connection(connection):
             if include_body:
-                request = '(X-GM-MSGID RFC822)'
+                request = '(X-GM-MSGID BODY.PEEK[])'
             else:
                 request = '(X-GM-MSGID UID FLAGS BODY.PEEK[HEADER.FIELDS (FROM CC TO SUBJECT DATE MESSAGE-ID)])'
             connection.uid("FETCH", ",".join(uids), request,
@@ -272,19 +288,18 @@ class Mailbox(object):
         """
 
         def _on_fetch((response, cb_arg, error)):
-
             typ, data = response
             if typ != "OK" or not data:
                 ga.loop_cb_args(callback, None)
             else:
-                for msg_parts in data[::-1]:
-                    if len(msg_parts) > 1:
-                        ga.loop_cb_args(callback,
-                            gm.Message(msg_parts, self, full_body=include_body))
+                for msg_parts in parse_fetch_request(data):
+                    flags, body = msg_parts
+                    ga.loop_cb_args(callback,
+                        gm.Message(body, self, full_body=include_body, flags=flags))
 
         def _on_connection(connection):
             if include_body:
-                request = '(X-GM-MSGID RFC822)'
+                request = '(X-GM-MSGID BODY.PEEK[])'
             else:
                 request = '(X-GM-MSGID UID FLAGS BODY.PEEK[HEADER.FIELDS (FROM CC TO SUBJECT DATE MESSAGE-ID)])'
 
@@ -317,17 +332,17 @@ class Mailbox(object):
         def _on_fetch((response, cb_arg, error)):
             typ, data = response
             if only_uids:
-                ga.loop_cb_args(callback, [string.split(elm, " ")[2][:-1] for elm in data])
+                ga.loop_cb_args(callback, [string.split(elm, " ")[4][:-1] for elm in data])
             else:
                 messages = []
-                for msg_parts in data[::-1]:
-                    if len(msg_parts) > 1:
-                        messages.append(gm.Message(msg_parts, self))
+                for msg_parts in parse_fetch_request(data):
+                    flags, body = msg_parts
+                    messages.append(gm.Message(body, self, flags=flags))
                 ga.loop_cb_args(callback, messages)
 
         def _on_connection(connection):
             if only_uids:
-                request = '(UID)'
+                request = '(X-GM-MSGID UID)'
             else:
                 request = '(X-GM-MSGID UID FLAGS BODY.PEEK[HEADER.FIELDS (FROM CC TO SUBJECT DATE MESSAGE-ID)])'
             connection.fetch(",".join(ids), request, callback=ga.add_loop_cb(_on_fetch))
