@@ -4,8 +4,8 @@ import base64
 import email.utils
 from email.parser import HeaderParser
 import email.header as eh
-import sys
-import logging
+from pygmail.address import Address
+import account as GA
 
 
 def message_in_list(message, message_list):
@@ -87,7 +87,7 @@ class Message(object):
     # Single, class-wide reference to an email header parser
     HEADER_PARSER = HeaderParser()
 
-    def __init__(self, message, mailbox):
+    def __init__(self, message, mailbox, full_body=False):
         """Initilizer for pgmail.message.Message objects
 
         Args:
@@ -102,10 +102,9 @@ class Message(object):
         self.mailbox = mailbox
         self.account = mailbox.account
         self.conn = self.account.connection
-
         match_rs = Message.METADATA_PATTERN.match(message[0])
 
-        if match_rs is None:
+        if not match_rs:
             match_short_rs = Message.METADATA_PATTERN_NOFLAGS.match(message[0])
             self.id, self.uid = match_short_rs.groups()
             self.flags = []
@@ -115,10 +114,12 @@ class Message(object):
 
         ### First parse out the metadata about the email message
         headers = Message.HEADER_PARSER.parsestr(message[1])
+
         self.date = headers["Date"]
         self.sender = headers["From"]
         self.to = headers["To"]
-        self.cc = headers["Cc"]
+        self.cc = headers["Cc"] if "Cc" in headers else ()
+
         if "Subject" not in headers:
             self.subject = None
         else:
@@ -128,15 +129,21 @@ class Message(object):
                 self.subject = unicode(subject_parts[0], subject_parts[1], errors='replace')
             else:
                 self.subject = unicode(subject_parts[0], 'ascii', errors='replace')
-        self.has_fetched_body = False
-        self.raw = None
+
+        self.message_id = headers['Message-Id']
+        self.has_fetched_body = None
+
+        self.google_id = headers['X-GM-MSGID']
+
+        if full_body:
+            self.raw = email.message_from_string(message[1])
+            self.charset = self.raw.get_content_charset()
+        else:
+            self.raw = None
         self.sent_datetime = None
         self.encoding = None
-
-    def __getstate__(self):
-        props = self.__dict__
-        del props['conn']
-        return props
+        self.body_html = None
+        self.body_plain = None
 
     def __eq__(self, other):
         """ Overrides equality operator to check by uid and mailbox name """
@@ -144,7 +151,19 @@ class Message(object):
             self.uid == other.uid and
             self.mailbox.name == other.mailbox.name)
 
-    def fetch_body(self, resync=False):
+    @property
+    def from_address(self):
+        if not hasattr(self, '_from_address'):
+            self._from_address = Address(self.sender)
+        return self._from_address
+
+    @property
+    def to_address(self):
+        if not hasattr(self, '_to_address'):
+            self._to_address = Address(self.to)
+        return self._to_address
+
+    def fetch_body(self, callback=None):
         """Returns the body of the email
 
         Fetches the body / main part of this email message.  Note that this
@@ -156,48 +175,63 @@ class Message(object):
             error occurs fetching the body of the messages, None is returned
 
         """
-        # First check to see if we've already pulled down the body of this
-        # message, in which case we can just return it w/o having to
-        # pull from the server again
-        if self.has_fetched_body:
-            return self.body_plain if self.body_html == "" else self.body_html
+        def _build_body_strings():
+            self.body_plain = u''
+            self.body_html = u''
 
-        print " - Fetching message %s" % (self.uid,)
+            if self.raw is not None:
+                for part in self.raw.walk():
+                    content_type = str(part.get_content_type())
+                    if content_type == 'text/plain':
+                        self.body_plain += encode_message_part(part, self.charset)
+                    elif content_type == 'text/html':
+                        self.body_html += encode_message_part(part, self.charset)
 
-        # Next, also check to see if we at least have a reference to the
-        # raw, underlying email message object, in which case we can save
-        # another network call to the IMAP server
-        if self.raw is None:
-            self.mailbox.select(force=resync)
-            status, data = self.conn().uid("FETCH", self.uid, "(RFC822)")
-            # When we get an empty response back from gmail,
-            # we just stop parsing the body and try again
-            if status is None or data[0] is None:
-                self.account.reconnect()
-                logging.getLogger().error("Empty response on: " + self.uid)
-                return self.fetch_body()
-            elif type(data[0]) is str:
-                logging.getLogger().error("bad message something: " + data[0])
-                print data
-                sys.exit()
-            self.raw = email.message_from_string(data[0][1])
-            self.charset = self.raw.get_content_charset()
+            self.has_fetched_body = True
+            if callback:
+                GA.loop_cb_args(callback, self.body_plain if self.body_html == "" else self.body_html)
+            else:
+                return self.body_plain if self.body_html == "" else self.body_html
 
-        self.body_plain = u''
-        self.body_html = u''
+        if callback:
+            def _on_fetch((response, cb_arg, error)):
+                typ, data = response
+                if typ != "OK":
+                    callback(None)
+                self.raw = email.message_from_string(data[0][1])
+                self.charset = self.raw.get_content_charset()
+                _build_body_strings()
 
-        if self.raw is not None:
-            for part in self.raw.walk():
-                content_type = str(part.get_content_type())
-                if content_type == 'text/plain':
-                    self.body_plain += encode_message_part(part, self.charset)
-                elif content_type == 'text/html':
-                    self.body_html += encode_message_part(part, self.charset)
+            def _on_connection(connection):
+                connection.uid("FETCH", self.uid, "(RFC822)",
+                    callback=GA.add_loop_cb(_on_fetch))
 
-        self.has_fetched_body = True
-        return self.body_plain if self.body_html == "" else self.body_html
+            def _on_select(result):
+                self.conn(callback=GA.add_loop_cb(_on_connection))
 
-    def html_body(self):
+            # First check to see if we've already pulled down the body of this
+            # message, in which case we can just return it w/o having to
+            # pull from the server again
+            if self.has_fetched_body:
+                callback(self.body_plain if self.body_html == "" else self.body_html)
+
+            # Next, also check to see if we at least have a reference to the
+            # raw, underlying email message object, in which case we can save
+            # another network call to the IMAP server
+            if self.raw is None:
+                self.mailbox.select(callback=GA.add_loop_cb(_on_select))
+            else:
+                _build_body_strings()
+        else:
+            if self.has_fetched_body:
+                return self.body_plain if self.body_html == "" else self.body_html
+
+            if self.raw is None:
+                self.mailbox.select()
+            else:
+                return _build_body_strings()
+
+    def html_body(self, callback=None):
         """Returns the HTML version of the message body, if available
 
         Lazy loads the HTML body of the email message from the server and
@@ -208,10 +242,16 @@ class Message(object):
             body (or the body is only in plain text)
 
         """
-        self.fetch_body()
-        return None if self.body_html == "" else self.body_html
+        if callback:
+            def _on_fetch_body(full_body):
+                GA.loop_cb_args(callback, None if self.body_html == "" else self.body_html)
 
-    def plain_body(self):
+            self.fetch_body(callback=GA.add_loop_cb(_on_fetch_body))
+        else:
+            self.fetch_body()
+            return None if self.body_html == "" else self.body_html
+
+    def plain_body(self, callback=None):
         """Returns the plain text version of the message body, if available
 
         Lazy loads the plain text version of the email body from the IMAP
@@ -222,10 +262,16 @@ class Message(object):
             has no body (or the body is only provided in HTML)
 
         """
-        self.fetch_body()
-        return None if self.body_plain == "" else self.body_plain
+        if callback:
+            def _on_fetch_body(full_body):
+                GA.loop_cb_args(callback, None if self.body_plain == "" else self.body_plain)
 
-    def raw_message(self):
+            self.fetch_body(callback=GA.add_loop_cb(_on_fetch_body))
+        else:
+            self.fetch_body()
+            return None if self.body_plain == "" else self.body_plain
+
+    def raw_message(self, callback=None):
         """Returns a representation of the message as a raw string
 
         Lazy loads the raw text version of the email message, if it hasn't
@@ -236,8 +282,14 @@ class Message(object):
             an error fetching it
 
         """
-        self.fetch_body()
-        return None if self.raw is None else self.raw.as_string()
+        if callback:
+            def _on_fetch_body(full_body):
+                GA.loop_cb_args(callback, None if self.raw is None else self.raw.as_string())
+
+            self.fetch_body(callback=GA.add_loop_cb(_on_fetch_body))
+        else:
+            self.fetch_body()
+            return None if self.raw is None else self.raw.as_string()
 
     def is_read(self):
         """Checks to see if the message has been flaged as read
@@ -255,48 +307,93 @@ class Message(object):
         based on the string date/time advertised in the email header
 
         Returns:
-            A datetime object representation of when the message was sent
+            A tupple object representation of when the message was sent
 
         """
         if self.sent_datetime is None:
             self.sent_datetime = email.utils.parsedate(self.date)
         return self.sent_datetime
 
-    def delete(self):
+    def delete(self, callback=None):
         """Deletes the message from the IMAP server
 
         Returns:
             A reference to the current object
 
         """
-        self.mailbox.select()
+        if not callback:
+            self.mailbox.select()
 
-        # First move the message we're trying to delete to the gmail
-        # trash.
-        self.conn().uid('COPY', self.uid, "[Gmail]/Trash")
+            # First move the message we're trying to delete to the gmail
+            # trash.
+            self.conn().uid('COPY', self.uid, "[Gmail]/Trash")
 
-        # Then delete the message from the current mailbox
-        self.conn().uid('STORE', self.uid, '+FLAGS', '(\Deleted)')
-        self.conn().expunge()
+            # Then delete the message from the current mailbox
+            self.conn().uid('STORE', self.uid, '+FLAGS', '(\Deleted)')
+            self.conn().expunge()
 
-        # Then, find the message we just added to the trash and mark that
-        # to be deleted as well.
-        #
-        # @note there is a possible race condition here, since if someone else
-        # sends us a message between when we did the above and below, we'll
-        # end up deleting the wrong message
-        self.conn().select("[Gmail]/Trash")
-        delete_uid = self.conn().uid('SEARCH', None, 'All')[1][0].split()[-1]
-        rs, data = self.conn().uid('STORE', delete_uid, '+FLAGS', '\\Deleted')
-        self.conn().expunge()
+            self.conn().select("[Gmail]/Trash")
+            deleted_uid = self.conn().uid('SEARCH',
+                '(HEADER MESSAGE-ID "' + self.message_id + '")')[0].split()[-1]
+            rs, data = self.conn().uid('STORE', deleted_uid, '+FLAGS',
+                '\\Deleted')
+            self.conn().expunge()
 
-        # Last, reselect the current mailbox.  We do this directly, instead
-        # of through the mailbox.select() method, since we didn't hand the
-        # token off to the "Trash" mailbox above.
-        self.conn().select(self.mailbox.name)
-        return self
+            # Last, reselect the current mailbox.  We do this directly, instead
+            # of through the mailbox.select() method, since we didn't hand the
+            # token off to the "Trash" mailbox above.
+            self.conn().select(self.mailbox.name)
+            return self
+        else:
+            def _on_recevieved_connection_6(connection):
+                connection.select(self.mailbox.name,
+                    callback=GA.add_loop_cb(callback))
 
-    def save(self):
+            def _on_expunge_complete((response, cb_arg, error)):
+                self.conn(callback=GA.add_loop_cb(_on_recevieved_connection_6))
+
+            def _on_recevieved_connection_5(connection):
+                connection.expunge(callback=GA.add_loop_cb(_on_expunge_complete))
+
+            def _on_delete_complete((response, cb_arg, error)):
+                self.conn(callback=GA.add_loop_cb(_on_recevieved_connection_5))
+
+            def _on_received_connection_4(connection, deleted_uid):
+                connection.uid('STORE', deleted_uid, '+FLAGS',
+                    '\\Deleted', callback=GA.add_loop_cb(_on_delete_complete))
+
+            def _on_search_for_message_complete(rs):
+                response, cb_arg, error = rs
+                typ, data = response
+                deleted_uid = data[0].split()[-1]
+                self.conn(callback=lambda conn: GA.io_loop().add_callback(lambda: _on_received_connection_4(conn, deleted_uid)))
+
+            def _on_received_connection_3(connection):
+                connection.uid('SEARCH',
+                    '(HEADER Message-ID "' + self.message_id + '")',
+                    callback=GA.add_loop_cb(_on_search_for_message_complete))
+
+            def _on_trash_selected((response, cb_arg, error)):
+                self.conn(callback=GA.add_loop_cb(_on_received_connection_3))
+
+            def _on_received_connection_2(connection):
+                connection.select("[Gmail]/Trash",
+                    callback=GA.add_loop_cb(_on_trash_selected))
+
+            def _on_message_moved((response, cb_arg, error)):
+                self.conn(callback=GA.add_loop_cb(_on_received_connection_2))
+
+            def _on_received_connection(connection):
+                connection.uid('COPY', self.uid, "[Gmail]/Trash",
+                    callback=GA.add_loop_cb(_on_message_moved))
+
+            def _on_mailbox_select(msg_count):
+
+                self.conn(callback=GA.add_loop_cb(_on_received_connection))
+
+            self.mailbox.select(callback=GA.add_loop_cb(_on_mailbox_select))
+
+    def save(self, callback=None):
         """Copies changes to the current message to the server
 
         Since we can't write to or update a message directly in IMAP, this
@@ -308,17 +405,38 @@ class Message(object):
             A reference to the current object
 
         """
-        self.fetch_body()
-        self.delete()
-        self.mailbox.select()
+        if callback:
+            def _save_received_connection(connection):
+                connection.append(
+                    self.mailbox.name,
+                    '(%s)' % ' '.join(self.flags),
+                    self.datetime(),
+                    self.raw_message(),
+                    callback=GA.add_loop_cb(callback)
+                )
 
-        rs, data = self.conn().append(
-            self.mailbox.name,
-            '(%s)' % ' '.join(self.flags),
-            self.datetime(),
-            self.raw_message()
-        )
-        return self
+            def _save_on_select(msg_count):
+                self.conn(callback=GA.add_loop_cb(_save_received_connection))
+
+            def _save_on_delete(rs):
+                self.mailbox.select(callback=GA.add_loop_cb(_save_on_select))
+
+            def _save_on_fetch_body(body_string):
+                self.delete(callback=GA.add_loop_cb(_save_on_delete))
+
+            self.fetch_body(callback=GA.add_loop_cb(_save_on_fetch_body))
+        else:
+            self.fetch_body()
+            self.delete()
+            self.mailbox.select()
+
+            rs, data = self.conn().append(
+                self.mailbox.name,
+                '(%s)' % ' '.join(self.flags),
+                self.datetime(),
+                self.raw_message()
+            )
+            return self
 
     def replace(self, find, replace):
         """Performs a body-wide string search and replace
