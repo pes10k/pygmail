@@ -78,11 +78,11 @@ class Message(object):
 
     # A regular expression used for extracting metadata information out
     # of the raw IMAP returned string.
-    METADATA_PATTERN = re.compile(r'(\d*) \(UID (\d*) FLAGS \((.*)\)\s')
+    METADATA_PATTERN = re.compile(r'(\d*) \(X-GM-MSGID (\d*) UID (\d*) FLAGS \((.*)\)\s')
 
     # A similar regular expression used for extracting metadata when the
     # message doesn't contain any flags
-    METADATA_PATTERN_NOFLAGS = re.compile(r'(\d*) \(UID (\d*)\s')
+    METADATA_PATTERN_NOFLAGS = re.compile(r'(\d*) \(X-GM-MSGID (\d*) UID (\d*)\s')
 
     # Single, class-wide reference to an email header parser
     HEADER_PARSER = HeaderParser()
@@ -106,10 +106,10 @@ class Message(object):
 
         if not match_rs:
             match_short_rs = Message.METADATA_PATTERN_NOFLAGS.match(message[0])
-            self.id, self.uid = match_short_rs.groups()
+            self.id, self.gmail_id, self.uid = match_short_rs.groups()
             self.flags = []
         else:
-            self.id, self.uid, flags = match_rs.groups()
+            self.id, self.gmail_id, self.uid, flags = match_rs.groups()
             self.flags = flags.split()
 
         ### First parse out the metadata about the email message
@@ -132,8 +132,6 @@ class Message(object):
 
         self.message_id = headers['Message-Id']
         self.has_fetched_body = None
-
-        self.google_id = headers['X-GM-MSGID']
 
         if full_body:
             self.raw = email.message_from_string(message[1])
