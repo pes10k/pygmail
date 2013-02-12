@@ -101,7 +101,7 @@ class Account(object):
                 self.boxes = []
                 for box in data:
                     if include_meta or "[" not in box:
-                        if box != '"[Gmail]"':
+                        if box.find('"[Gmail]"') == -1 and box.find('"[Gmail]/Chats"') == -1:
                             self.boxes.append(mailbox.Mailbox(self, box))
                 loop_cb_args(callback, self.boxes)
 
