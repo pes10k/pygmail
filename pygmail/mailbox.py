@@ -170,10 +170,15 @@ class Mailbox(object):
 
         """
         def _on_search((response, cb_arg, error)):
+            if not response:
+                ga.loop_cb_args(callback, [])
+                return
+
             typ, data = response
 
             if typ != "OK":
-                ga.loop_cb_args(callback, None)
+                ga.loop_cb_args(callback, [])
+                return
 
             ids = string.split(data[0])
             ids_to_fetch = page_from_list(ids, limit, offset)
@@ -181,9 +186,7 @@ class Mailbox(object):
                 callback=ga.add_loop_cb(callback))
 
         def _on_connection(connection):
-            quoted = gu.quote(term)
-            search_phrase = '(BODY "%s")' % (quoted)
-            rs, data = connection.search(None, search_phrase,
+            rs, data = connection.search(None, 'X-GM-RAW', term,
                 callback=ga.add_loop_cb(_on_search))
 
         def _on_mailbox_selected(was_changed):
@@ -328,29 +331,30 @@ class Mailbox(object):
             A list of zero or more message objects (or uids)
 
         """
+        # If we were told to fetch no messages, fast "callback" and don't
+        # bother doing any network io
+        if len(ids) == 0:
+            ga.loop_cb_args(callback, [])
+        else:
+            def _on_fetch((response, cb_arg, error)):
+                typ, data = response
+                if only_uids:
+                    ga.loop_cb_args(callback, [string.split(elm, " ")[4][:-1] for elm in data])
+                else:
+                    messages = []
+                    for msg_parts in parse_fetch_request(data):
+                        flags, body = msg_parts
+                        messages.append(gm.Message(body, self, flags=flags))
+                    ga.loop_cb_args(callback, messages)
 
-        def _on_fetch((response, cb_arg, error)):
-            typ, data = response
-            if only_uids:
-                ga.loop_cb_args(callback, [string.split(elm, " ")[4][:-1] for elm in data])
-            else:
-                messages = []
-                for msg_parts in parse_fetch_request(data):
-                    flags, body = msg_parts
-                    messages.append(gm.Message(body, self, flags=flags))
-                ga.loop_cb_args(callback, messages)
+            def _on_connection(connection):
+                if only_uids:
+                    request = '(X-GM-MSGID UID)'
+                else:
+                    request = '(X-GM-MSGID UID FLAGS BODY.PEEK[HEADER.FIELDS (FROM CC TO SUBJECT DATE MESSAGE-ID)])'
+                connection.fetch(",".join(ids), request, callback=ga.add_loop_cb(_on_fetch))
 
-        def _on_connection(connection):
-            if only_uids:
-                request = '(X-GM-MSGID UID)'
-            else:
-                request = '(X-GM-MSGID UID FLAGS BODY.PEEK[HEADER.FIELDS (FROM CC TO SUBJECT DATE MESSAGE-ID)])'
-            connection.fetch(",".join(ids), request, callback=ga.add_loop_cb(_on_fetch))
+            def _on_select(result):
+                self.account.connection(callback=ga.add_loop_cb(_on_connection))
 
-        def _on_select(result):
-            self.account.connection(callback=ga.add_loop_cb(_on_connection))
-
-        if not ids:
-            callback([])
-
-        self.select(callback=ga.add_loop_cb(_on_select))
+            self.select(callback=ga.add_loop_cb(_on_select))

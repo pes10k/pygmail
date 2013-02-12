@@ -77,12 +77,15 @@ class Account(object):
         if hasattr(self, 'conn') and hasattr(self, 'connected'):
             self.conn.logout()
 
-    def mailboxes(self, callback=None):
+    def mailboxes(self, callback=None, include_meta=False):
         """Returns a list of all mailboxes in the current account
 
         Keyword Args:
-            callback -- optional callback function, which will cause the
-                        conection to operate in an async mode
+            callback     -- optional callback function, which will cause the
+                            conection to operate in an async mode
+            include_meta -- Whether or not the Gmail special meta mailboxes
+                            (such as "All Messages", "Drafts", etc.) should be
+                            included
 
         Returns:
             A list of pygmail.mailbox.Mailbox objects, each representing one
@@ -97,8 +100,9 @@ class Account(object):
                 typ, data = response
                 self.boxes = []
                 for box in data:
-                    if "[" not in box:
-                        self.boxes.append(mailbox.Mailbox(self, box))
+                    if include_meta or "[" not in box:
+                        if box != '"[Gmail]"':
+                            self.boxes.append(mailbox.Mailbox(self, box))
                 loop_cb_args(callback, self.boxes)
 
             def _on_connection(connection):

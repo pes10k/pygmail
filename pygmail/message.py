@@ -163,6 +163,21 @@ class Message(object):
             self._to_address = Address(self.to)
         return self._to_address
 
+    def _build_body_strings(self):
+        self.body_plain = u''
+        self.body_html = u''
+
+        if self.raw is not None:
+            for part in self.raw.walk():
+                content_type = str(part.get_content_type())
+                if content_type == 'text/plain':
+                    self.body_plain += encode_message_part(part, self.charset)
+                elif content_type == 'text/html':
+                    self.body_html += encode_message_part(part, self.charset)
+
+        self.has_fetched_body = True
+        return self.body_plain if self.body_html == "" else self.body_html
+
     def fetch_body(self, callback=None):
         """Returns the body of the email
 
@@ -175,61 +190,51 @@ class Message(object):
             error occurs fetching the body of the messages, None is returned
 
         """
-        def _build_body_strings():
-            self.body_plain = u''
-            self.body_html = u''
-
-            if self.raw is not None:
-                for part in self.raw.walk():
-                    content_type = str(part.get_content_type())
-                    if content_type == 'text/plain':
-                        self.body_plain += encode_message_part(part, self.charset)
-                    elif content_type == 'text/html':
-                        self.body_html += encode_message_part(part, self.charset)
-
-            self.has_fetched_body = True
-            if callback:
-                GA.loop_cb_args(callback, self.body_plain if self.body_html == "" else self.body_html)
-            else:
-                return self.body_plain if self.body_html == "" else self.body_html
-
         if callback:
-            def _on_fetch((response, cb_arg, error)):
+            def _fetch_body_on_fetch((response, cb_arg, error)):
                 typ, data = response
                 if typ != "OK":
-                    callback(None)
-                self.raw = email.message_from_string(data[0][1])
-                self.charset = self.raw.get_content_charset()
-                _build_body_strings()
+                    GA.loop_cb_args(callback, None)
+                else:
+                    self.raw = email.message_from_string(data[0][1])
+                    self.charset = self.raw.get_content_charset()
+                    body_contents = self._build_body_strings()
+                    GA.loop_cb_args(callback, body_contents)
 
-            def _on_connection(connection):
+            def _fetch_body_on_connection(connection):
                 connection.uid("FETCH", self.uid, "(RFC822)",
-                    callback=GA.add_loop_cb(_on_fetch))
+                    callback=GA.add_loop_cb(_fetch_body_on_fetch))
 
-            def _on_select(result):
-                self.conn(callback=GA.add_loop_cb(_on_connection))
+            def _fetch_body_on_select(result):
+                self.conn(callback=GA.add_loop_cb(_fetch_body_on_connection))
 
             # First check to see if we've already pulled down the body of this
             # message, in which case we can just return it w/o having to
             # pull from the server again
             if self.has_fetched_body:
-                callback(self.body_plain if self.body_html == "" else self.body_html)
-
-            # Next, also check to see if we at least have a reference to the
-            # raw, underlying email message object, in which case we can save
-            # another network call to the IMAP server
-            if self.raw is None:
-                self.mailbox.select(callback=GA.add_loop_cb(_on_select))
+                GA.loop_cb_args(callback, self.body_plain if self.body_html == "" else self.body_html)
             else:
-                _build_body_strings()
+                # Next, also check to see if we at least have a reference to the
+                # raw, underlying email message object, in which case we can save
+                # another network call to the IMAP server
+                if self.raw is None:
+                    self.mailbox.select(callback=GA.add_loop_cb(_fetch_body_on_select))
+                else:
+                    body_contents = self._build_body_strings()
+                    GA.loop_cb_args(callback, body_contents)
         else:
             if self.has_fetched_body:
                 return self.body_plain if self.body_html == "" else self.body_html
-
-            if self.raw is None:
-                self.mailbox.select()
             else:
-                return _build_body_strings()
+                if self.raw is None:
+                    self.mailbox.select()
+                    typ, data = self.conn.uid("FETCH", self.uid, "(RFC822)")
+                    if typ != "OK":
+                        return None
+                    else:
+                        self.raw = email.message_from_string(data[0][1])
+                        self.charset = self.raw.get_content_charset()
+                return self._build_body_strings()
 
     def html_body(self, callback=None):
         """Returns the HTML version of the message body, if available
@@ -408,7 +413,7 @@ class Message(object):
             def _save_received_connection(connection):
                 connection.append(
                     self.mailbox.name,
-                    '(%s)' % ' '.join(self.flags) if len(self.flags) > 1 else "",
+                    '(%s)' % ' '.join(self.flags) if len(self.flags) > 1 else "()",
                     self.datetime(),
                     self.raw_message(),
                     callback=GA.add_loop_cb(callback)
