@@ -265,7 +265,7 @@ class Mailbox(object):
 
         def _on_connection(connection):
             if include_body:
-                request = '(X-GM-MSGID BODY.PEEK[])'
+                request = '(X-GM-MSGID FLAGS BODY.PEEK[])'
             else:
                 request = '(X-GM-MSGID UID FLAGS BODY.PEEK[HEADER.FIELDS (FROM CC TO SUBJECT DATE MESSAGE-ID)])'
             connection.uid("FETCH", ",".join(uids), request,
@@ -302,7 +302,7 @@ class Mailbox(object):
 
         def _on_connection(connection):
             if include_body:
-                request = '(X-GM-MSGID BODY.PEEK[])'
+                request = '(X-GM-MSGID FLAGS BODY.PEEK[])'
             else:
                 request = '(X-GM-MSGID UID FLAGS BODY.PEEK[HEADER.FIELDS (FROM CC TO SUBJECT DATE MESSAGE-ID)])'
 

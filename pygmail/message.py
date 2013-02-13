@@ -114,6 +114,8 @@ class Message(object):
             self.id, self.gmail_id, self.uid, flags = match_rs.groups()
             self.flags = flags.split()
 
+        self.flags = [flag for flag in self.flags if flag != ")"]
+
         ### First parse out the metadata about the email message
         headers = Message.HEADER_PARSER.parsestr(message[1])
 
@@ -413,7 +415,7 @@ class Message(object):
             def _save_received_connection(connection):
                 connection.append(
                     self.mailbox.name,
-                    '(%s)' % ' '.join(self.flags) if len(self.flags) > 1 else "()",
+                    '(%s)' % ' '.join(self.flags) if self.flags else "()",
                     self.datetime(),
                     self.raw_message(),
                     callback=GA.add_loop_cb(callback)

@@ -25,6 +25,10 @@ def add_loop_cb(callback):
     return lambda arg: loop_cb_args(callback, arg)
 
 
+def is_auth_error(response):
+    return response.__class__ is AuthError
+
+
 class Account(object):
     """Represents a connection with a Google Mail account
 
@@ -95,7 +99,6 @@ class Account(object):
         if self.boxes is not None:
             loop_cb_args(callback, self.boxes)
         else:
-
             def _on_mailboxes((response, cb_arg, error)):
                 typ, data = response
                 self.boxes = []
@@ -106,7 +109,10 @@ class Account(object):
                 loop_cb_args(callback, self.boxes)
 
             def _on_connection(connection):
-                connection.list(callback=lambda rs: loop_cb_args(_on_mailboxes, rs))
+                if is_auth_error(connection):
+                    loop_cb_args(callback, connection)
+                else:
+                    connection.list(callback=lambda rs: loop_cb_args(_on_mailboxes, rs))
 
             self.connection(callback=lambda conn: loop_cb_args(_on_connection, conn))
 
@@ -146,7 +152,7 @@ class Account(object):
         be taken (so multiplie calls to this method will result in a single
         connection effort, once a connection has been successfully created).
 
-        Raises:
+        Returns:
             pygmail.account.AuthError, if the given connection parameters are
             not accepted by the Gmail server
 
@@ -156,7 +162,7 @@ class Account(object):
                 if not response or response[0] != "OK":
                     error = "User / OAuth2 token (%s, %s) were not accepted" % (
                         self.email, self.oauth2_token)
-                    raise AuthError(error)
+                    loop_cb_args(callback, AuthError(error))
                 else:
                     self.connected = True
                     loop_cb_args(callback, self.conn)
@@ -168,11 +174,14 @@ class Account(object):
                 xoauth2_string = 'user=%s\1auth=Bearer %s\1\1' % auth_params
                 if __debug__:
                     print xoauth2_string
-                self.conn.authenticate(
-                    "XOAUTH2",
-                    lambda x: xoauth2_string,
-                    callback=lambda rs: loop_cb_args(_on_authentication, rs)
-                )
+                try:
+                    self.conn.authenticate(
+                        "XOAUTH2",
+                        lambda x: xoauth2_string,
+                        callback=lambda rs: loop_cb_args(_on_authentication, rs)
+                    )
+                except:
+                    loop_cb_args(callback, AuthError(""))
         else:
             if self.connected:
                 return self.conn
@@ -182,13 +191,12 @@ class Account(object):
                 if __debug__:
                     print xoauth2_string
                 typ, data = self.conn.authenticate(
-                    "XOAUTH2",
-                    lambda x: xoauth2_string
+                    "XOAUTH2", lambda x: xoauth2_string
                 )
                 if typ != "OK":
                     error = "User / OAuth2 token (%s, %s) were not accepted" % (
                         self.email, self.oauth2_token)
-                    raise AuthError(error)
+                    return AuthError(error)
                 else:
                     self.connected = True
                     return self.conn
@@ -207,6 +215,10 @@ class Account(object):
         self.connected = False
 
 
-class AuthError(Exception):
-    """An exeption signifying that an authentication attempt with the gmail
-    server was not accepted."""
+class AuthError(object):
+    """An exeption like class signifying that an authentication attempt with the
+    gmail server was not accepted. This is handled through a class instead of
+    through exceptions to make things easier with the event loop."""
+
+    def __init__(self, desc):
+        self.msg = desc
