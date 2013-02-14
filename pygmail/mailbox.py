@@ -265,9 +265,9 @@ class Mailbox(object):
 
         def _on_connection(connection):
             if include_body:
-                request = '(X-GM-MSGID FLAGS BODY.PEEK[])'
+                request = '(X-GM-MSGID FLAGS X-GM-LABELS BODY.PEEK[])'
             else:
-                request = '(X-GM-MSGID UID FLAGS BODY.PEEK[HEADER.FIELDS (FROM CC TO SUBJECT DATE MESSAGE-ID)])'
+                request = '(X-GM-MSGID UID FLAGS X-GM-LABELS BODY.PEEK[HEADER.FIELDS (FROM CC TO SUBJECT DATE MESSAGE-ID)])'
             connection.uid("FETCH", ",".join(uids), request,
                 callback=ga.add_loop_cb(_on_fetch))
 
@@ -302,9 +302,9 @@ class Mailbox(object):
 
         def _on_connection(connection):
             if include_body:
-                request = '(X-GM-MSGID FLAGS BODY.PEEK[])'
+                request = '(X-GM-MSGID FLAGS X-GM-LABELS BODY.PEEK[])'
             else:
-                request = '(X-GM-MSGID UID FLAGS BODY.PEEK[HEADER.FIELDS (FROM CC TO SUBJECT DATE MESSAGE-ID)])'
+                request = '(X-GM-MSGID UID FLAGS X-GM-LABELS BODY.PEEK[HEADER.FIELDS (FROM CC TO SUBJECT DATE MESSAGE-ID)])'
 
             connection.uid("FETCH", uid, request,
                 callback=ga.add_loop_cb(_on_fetch))
@@ -351,7 +351,7 @@ class Mailbox(object):
                 if only_uids:
                     request = '(X-GM-MSGID UID)'
                 else:
-                    request = '(X-GM-MSGID UID FLAGS BODY.PEEK[HEADER.FIELDS (FROM CC TO SUBJECT DATE MESSAGE-ID)])'
+                    request = '(X-GM-MSGID UID FLAGS X-GM-LABELS BODY.PEEK[HEADER.FIELDS (FROM CC TO SUBJECT DATE MESSAGE-ID)])'
                 connection.fetch(",".join(ids), request, callback=ga.add_loop_cb(_on_fetch))
 
             def _on_select(result):

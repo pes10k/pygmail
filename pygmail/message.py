@@ -78,11 +78,11 @@ class Message(object):
 
     # A regular expression used for extracting metadata information out
     # of the raw IMAP returned string.
-    METADATA_PATTERN = re.compile(r'(\d*) \(X-GM-MSGID (\d*) UID (\d*) FLAGS \((.*)\)\s')
+    METADATA_PATTERN = re.compile(r'(\d*) \(X-GM-MSGID (\d*) X-GM-LABELS \((.*)\) UID (\d*) FLAGS \((.*)\)\s')
 
     # A similar regular expression used for extracting metadata when the
     # message doesn't contain any flags
-    METADATA_PATTERN_NOFLAGS = re.compile(r'(\d*) \(X-GM-MSGID (\d*) UID (\d*)\s')
+    METADATA_PATTERN_NOFLAGS = re.compile(r'(\d*) \(X-GM-MSGID (\d*) X-GM-LABELS \((.*)\) UID (\d*)\s')
 
     # Single, class-wide reference to an email header parser
     HEADER_PARSER = HeaderParser()
@@ -108,13 +108,15 @@ class Message(object):
         # come not in the header string, but at the end of the message
         if not match_rs:
             match_short_rs = Message.METADATA_PATTERN_NOFLAGS.match(message[0])
-            self.id, self.gmail_id, self.uid = match_short_rs.groups()
-            self.flags = flags[-1].split() if flags else []
+            self.id, self.gmail_id, labels, self.uid = match_short_rs.groups()
+            self.flags = flags.split() if flags else []
+            self.labels = labels
         else:
-            self.id, self.gmail_id, self.uid, flags = match_rs.groups()
+            self.id, self.gmail_id, labels, self.uid, flags = match_rs.groups()
             self.flags = flags.split()
+            self.labels = labels
 
-        self.flags = [flag for flag in self.flags if flag != ")"]
+        self.labels = [a_label.replace("\\\\\\", "\\") for a_label in labels.split()]
 
         ### First parse out the metadata about the email message
         headers = Message.HEADER_PARSER.parsestr(message[1])
@@ -412,13 +414,46 @@ class Message(object):
 
         """
         if callback:
+
+            def _save_post_labeling(rs):
+                GA.loop_cb_args(callback, rs)
+
+            def _save_post_search_select(connection):
+                connection.uid("STORE", self.uid,
+                    "+X-GM-LABELS", " ".join(self.labels),
+                    callback=GA.add_loop_cb(_save_post_labeling)
+                )
+
+            def _save_message_id_search((response, cb_arg, error)):
+                typ, data = response
+                self.uid = data[0].split()[-1]
+                self.conn(callback=GA.add_loop_cb(_save_post_search_select))
+
+            def _save_post_append_select(connection):
+                connection.uid('SEARCH',
+                    '(HEADER Message-ID "' + self.message_id + '")',
+                    callback=GA.add_loop_cb(_save_message_id_search))
+
+            def _save_on_append((response, cb_arg, error)):
+                # Add error handling here!
+                if len(self.labels) == 0:
+                    # If there were no labels attached to this message, we
+                    # don't have to futz with it any more, we can just
+                    # go ahead and return back to the main process
+                    GA.loop_cb(callback)
+                else:
+                    # Otherwise, we need to search down the new UID of the
+                    # message we just added, so that we can stick the
+                    # labels to it
+                    self.conn(callback=GA.add_loop_cb(_save_post_append_select))
+
             def _save_received_connection(connection):
                 connection.append(
                     self.mailbox.name,
                     '(%s)' % ' '.join(self.flags) if self.flags else "()",
                     self.datetime(),
                     self.raw_message(),
-                    callback=GA.add_loop_cb(callback)
+                    callback=GA.add_loop_cb(_save_on_append)
                 )
 
             def _save_on_select(msg_count):
