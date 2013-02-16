@@ -120,6 +120,7 @@ class Message(object):
 
         ### First parse out the metadata about the email message
         headers = Message.HEADER_PARSER.parsestr(message[1])
+        self.headers = headers
 
         self.date = headers["Date"]
         self.sender = headers["From"]
@@ -316,7 +317,7 @@ class Message(object):
         based on the string date/time advertised in the email header
 
         Returns:
-            A tupple object representation of when the message was sent
+            A tuple object representation of when the message was sent
 
         """
         if self.sent_datetime is None:
