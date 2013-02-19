@@ -1,7 +1,6 @@
 import re
 import string
 import message as gm
-import utilities as gu
 import account as ga
 
 
@@ -95,27 +94,18 @@ class Mailbox(object):
             error
 
         """
-        if callback:
-            def _on_select_complete((response, cb_arg, error)):
-                typ, data = response
-                if typ == "OK":
-                    self.account.last_viewed_mailbox = self
-                    ga.loop_cb_args(callback, Mailbox.COUNT_PATTERN.sub("", str(data)))
-                else:
-                    ga.loop_cb_args(callback, None)
-
-            def _on_connection(connection):
-                connection.select(mailbox=self.name, callback=ga.add_loop_cb(_on_select_complete))
-
-            self.account.connection(callback=ga.add_loop_cb(_on_connection))
-        else:
-            connection = self.account.connection()
-            typ, data = connection.select(mailbox=self.name)
-            if typ != "OK":
-                return None
-            else:
+        def _on_select_complete((response, cb_arg, error)):
+            typ, data = response
+            if typ == "OK":
                 self.account.last_viewed_mailbox = self
-                return Mailbox.COUNT_PATTERN.sub("", str(data))
+                ga.loop_cb_args(callback, Mailbox.COUNT_PATTERN.sub("", str(data)))
+            else:
+                ga.loop_cb_args(callback, None)
+
+        def _on_connection(connection):
+            connection.select(mailbox=self.name, callback=ga.add_loop_cb(_on_select_complete))
+
+        self.account.connection(callback=ga.add_loop_cb(_on_connection))
 
     def select(self, callback=None):
         """Sets this mailbox as the current active one on the IMAP connection
@@ -129,17 +119,14 @@ class Mailbox(object):
             True if any changes were made, otherwise False
 
         """
-        if callback:
-            def _on_count_complete(num):
-                self.account.last_viewed_mailbox = self
-                ga.loop_cb_args(callback, True)
+        def _on_count_complete(num):
+            self.account.last_viewed_mailbox = self
+            ga.loop_cb_args(callback, True)
 
-            if self is self.account.last_viewed_mailbox:
-                ga.loop_cb_args(callback, False)
-            else:
-                self.count(callback=ga.add_loop_cb(_on_count_complete))
+        if self is self.account.last_viewed_mailbox:
+            ga.loop_cb_args(callback, False)
         else:
-            return self.count()
+            self.count(callback=ga.add_loop_cb(_on_count_complete))
 
     def search(self, term, limit=100, offset=0, only_uids=False, callback=None):
         """Searches for messages in the inbox that contain a given phrase

@@ -100,36 +100,24 @@ class Account(object):
             mailbox in the IMAP account
 
         """
-        if callback:
-            if self.boxes is not None:
-                loop_cb_args(callback, self.boxes)
-            else:
-                def _on_mailboxes((response, cb_arg, error)):
-                    typ, data = response
-                    self.boxes = []
-                    for box in data:
-                        if include_meta or "[" not in box:
-                            self.boxes.append(mailbox.Mailbox(self, box))
-                    loop_cb_args(callback, self.boxes)
-
-                def _on_connection(connection):
-                    if is_auth_error(connection):
-                        loop_cb_args(callback, connection)
-                    else:
-                        connection.list(callback=lambda rs: loop_cb_args(_on_mailboxes, rs))
-
-                self.connection(callback=lambda conn: loop_cb_args(_on_connection, conn))
+        if self.boxes is not None:
+            loop_cb_args(callback, self.boxes)
         else:
-            conn = self.connection()
-            if is_auth_error(conn):
-                return conn
-            else:
-                typ, data = conn.list()
+            def _on_mailboxes((response, cb_arg, error)):
+                typ, data = response
                 self.boxes = []
                 for box in data:
                     if include_meta or "[" not in box:
                         self.boxes.append(mailbox.Mailbox(self, box))
-                return self.boxes
+                loop_cb_args(callback, self.boxes)
+
+            def _on_connection(connection):
+                if is_auth_error(connection):
+                    loop_cb_args(callback, connection)
+                else:
+                    connection.list(callback=lambda rs: loop_cb_args(_on_mailboxes, rs))
+
+            self.connection(callback=lambda conn: loop_cb_args(_on_connection, conn))
 
     def get(self, mailbox_name, callback=None, include_meta=False):
         """Returns the mailbox with a given name in the current account
@@ -153,7 +141,7 @@ class Account(object):
         """
         def _retreived_mailboxes(mailboxes):
             if is_auth_error(mailboxes):
-                loop_cb_args(callback, AuthError(""))
+                loop_cb_args(callback, mailboxes)
             else:
                 for mailbox in mailboxes:
                     if mailbox.name == mailbox_name:
@@ -180,53 +168,31 @@ class Account(object):
             not accepted by the Gmail server
 
         """
-        if callback:
-            def _on_authentication((response, cb_arg, error)):
-                if not response or response[0] != "OK":
-                    error = "User / OAuth2 token (%s, %s) were not accepted" % (
-                        self.email, self.oauth2_token)
-                    loop_cb_args(callback, AuthError(error))
-                else:
-                    self.connected = True
-                    loop_cb_args(callback, self.conn)
-
-            if self.connected:
+        def _on_authentication((response, cb_arg, error)):
+            if not response or response[0] != "OK":
+                error = "User / OAuth2 token (%s, %s) were not accepted" % (
+                    self.email, self.oauth2_token)
+                loop_cb_args(callback, AuthError(error))
+            else:
+                self.connected = True
                 loop_cb_args(callback, self.conn)
-            else:
-                auth_params = self.email, self.oauth2_token
-                xoauth2_string = 'user=%s\1auth=Bearer %s\1\1' % auth_params
-                if __debug__:
-                    print xoauth2_string
-                try:
-                    self.conn.authenticate(
-                        "XOAUTH2",
-                        lambda x: xoauth2_string,
-                        callback=lambda rs: loop_cb_args(_on_authentication, rs)
-                    )
-                except:
-                    loop_cb_args(callback, AuthError(""))
+
+        if self.connected:
+            loop_cb_args(callback, self.conn)
         else:
-            if self.connected:
-                return self.conn
-            else:
-                auth_params = self.email, self.oauth2_token
-                xoauth2_string = 'user=%s\1auth=Bearer %s\1\1' % auth_params
-                if __debug__:
-                    print xoauth2_string
-                try:
-                    typ, data = self.conn.authenticate(
-                        "XOAUTH2", lambda x: xoauth2_string
-                    )
-                    if typ != "OK":
-                        print "ABC"
-                        error = "User / OAuth2 token (%s, %s) were not accepted" % (
-                            self.email, self.oauth2_token)
-                        return AuthError(error)
-                    else:
-                        self.connected = True
-                        return self.conn
-                except:
-                    return AuthError("")
+            auth_params = self.email, self.oauth2_token
+            xoauth2_string = 'user=%s\1auth=Bearer %s\1\1' % auth_params
+            if __debug__:
+                print xoauth2_string
+            try:
+                self.conn.authenticate(
+                    "XOAUTH2",
+                    lambda x: xoauth2_string,
+                    callback=lambda rs: loop_cb_args(_on_authentication, rs)
+                )
+            except:
+                loop_cb_args(callback, AuthError(""))
+
 
     def close(self):
         """Closes the IMAP connection to GMail

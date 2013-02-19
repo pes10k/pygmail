@@ -1,11 +1,16 @@
 import email
 import re
-import base64
 import email.utils
 from email.parser import HeaderParser
+from email.Iterators import typed_subpart_iterator
 import email.header as eh
 from pygmail.address import Address
 import account as GA
+
+
+def message_part_charset(part):
+    """Get the charset of the a part of the message"""
+    return part.get_content_charset() or part.get_charset()
 
 
 def message_in_list(message, message_list):
@@ -33,7 +38,7 @@ def message_in_list(message, message_list):
     return False
 
 
-def encode_message_part(message_part, message_encoding):
+def utf8_encode_message_part(message, message_part, default="ascii"):
     """Returns the payload of a part of an email, encoded as UTF-8
 
     Normalizes the text / contents of an email message to be UTF-8, regardless
@@ -51,9 +56,18 @@ def encode_message_part(message_part, message_encoding):
     if isinstance(payload, unicode):
         return payload
     else:
-        encoding = message_encoding if not message_part.get_content_charset() else message_part.get_content_charset()
+        section_encoding = message_part_charset(message_part)
+        encoding = section_encoding or default
+
         if encoding and "utf-8" not in encoding:
             return unicode(payload, encoding, errors='replace')
+        elif encoding == "utf-8":
+            try:
+                return unicode(payload, "utf-8")
+            except UnicodeDecodeError as error:
+                print "UnicodeDecodeError in '%s': %s" % (message.message_id, error)
+            except TypeError as error:
+                print "TypeError in '%s': %s" % (message.message_id, error)
         else:
             return unicode(payload, "ascii", errors='replace')
 
@@ -102,21 +116,22 @@ class Message(object):
         self.mailbox = mailbox
         self.account = mailbox.account
         self.conn = self.account.connection
-        match_rs = Message.METADATA_PATTERN.match(message[0])
+        metadata_rs = Message.METADATA_PATTERN.match(message[0])
 
         # If we're loading from a full RFC822 asked for message, the flags
         # come not in the header string, but at the end of the message
-        if not match_rs:
-            match_short_rs = Message.METADATA_PATTERN_NOFLAGS.match(message[0])
-            self.id, self.gmail_id, labels, self.uid = match_short_rs.groups()
-            self.flags = flags.split() if flags else []
-            self.labels = labels
+        if not metadata_rs:
+            metadata_short_rs = Message.METADATA_PATTERN_NOFLAGS.match(message[0])
+            self.id, self.gmail_id, self.labels, self.uid = metadata_short_rs.groups()
         else:
-            self.id, self.gmail_id, labels, self.uid, flags = match_rs.groups()
-            self.flags = flags.split()
-            self.labels = labels
+            self.id, self.gmail_id, self.labels, self.uid, self.flags = metadata_rs.groups()
 
-        self.labels = [a_label.replace("\\\\\\", "\\") for a_label in labels.split()]
+        self.flags = self.flags.split() if self.flags else []
+        self.labels = self.labels.split() if self.labels else []
+
+        # Prune the quoted quote hell scape
+        self.flags = [flag.replace(r'\\\\', r'\\') for flag in self.flags]
+        self.labels = [label.replace(r'\\\\', r'\\') for label in self.labels]
 
         ### First parse out the metadata about the email message
         headers = Message.HEADER_PARSER.parsestr(message[1])
@@ -138,13 +153,14 @@ class Message(object):
                 self.subject = unicode(subject_parts[0], 'ascii', errors='replace')
 
         self.message_id = headers['Message-Id']
-        self.has_fetched_body = None
 
         if full_body:
             self.raw = email.message_from_string(message[1])
             self.charset = self.raw.get_content_charset()
         else:
             self.raw = None
+
+        self.has_built_body_strings = None
         self.sent_datetime = None
         self.encoding = None
         self.body_html = None
@@ -169,21 +185,21 @@ class Message(object):
         return self._to_address
 
     def _build_body_strings(self):
-        self.body_plain = u''
-        self.body_html = u''
+        if not self.has_built_body_strings:
+            self.body_plain = u''
+            self.body_html = u''
 
-        if self.raw is not None:
-            for part in self.raw.walk():
-                content_type = str(part.get_content_type())
-                if content_type == 'text/plain':
-                    self.body_plain += encode_message_part(part, self.charset)
-                elif content_type == 'text/html':
-                    self.body_html += encode_message_part(part, self.charset)
+            for part in typed_subpart_iterator(self.raw, 'text', 'plain'):
+                section_encoding = message_part_charset(part) or self.charset
+                self.body_plain += utf8_encode_message_part(self, part, section_encoding)
 
-        self.has_fetched_body = True
-        return self.body_plain if self.body_html == "" else self.body_html
+            for part in typed_subpart_iterator(self.raw, 'text', 'html'):
+                section_encoding = message_part_charset(part) or self.charset
+                self.body_html += utf8_encode_message_part(self, part, section_encoding)
 
-    def fetch_body(self, callback=None):
+            self.has_built_body_strings = True
+
+    def fetch_raw_body(self, callback=None):
         """Returns the body of the email
 
         Fetches the body / main part of this email message.  Note that this
@@ -195,51 +211,32 @@ class Message(object):
             error occurs fetching the body of the messages, None is returned
 
         """
-        if callback:
-            def _fetch_body_on_fetch((response, cb_arg, error)):
-                typ, data = response
-                if typ != "OK":
-                    GA.loop_cb_args(callback, None)
-                else:
-                    self.raw = email.message_from_string(data[0][1])
-                    self.charset = self.raw.get_content_charset()
-                    body_contents = self._build_body_strings()
-                    GA.loop_cb_args(callback, body_contents)
-
-            def _fetch_body_on_connection(connection):
-                connection.uid("FETCH", self.uid, "(RFC822)",
-                    callback=GA.add_loop_cb(_fetch_body_on_fetch))
-
-            def _fetch_body_on_select(result):
-                self.conn(callback=GA.add_loop_cb(_fetch_body_on_connection))
-
-            # First check to see if we've already pulled down the body of this
-            # message, in which case we can just return it w/o having to
-            # pull from the server again
-            if self.has_fetched_body:
-                GA.loop_cb_args(callback, self.body_plain if self.body_html == "" else self.body_html)
+        def _on_fetch((response, cb_arg, error)):
+            typ, data = response
+            if typ != "OK":
+                GA.loop_cb_args(callback, None)
             else:
-                # Next, also check to see if we at least have a reference to the
-                # raw, underlying email message object, in which case we can save
-                # another network call to the IMAP server
-                if self.raw is None:
-                    self.mailbox.select(callback=GA.add_loop_cb(_fetch_body_on_select))
-                else:
-                    body_contents = self._build_body_strings()
-                    GA.loop_cb_args(callback, body_contents)
+                self.raw = email.message_from_string(data[0][1])
+                self.charset = self.raw.get_content_charset()
+                GA.loop_cb_args(callback, self.raw)
+
+        def _on_connection(connection):
+            connection.uid("FETCH", self.uid, "(RFC822)",
+                callback=GA.add_loop_cb(_on_fetch))
+
+        def _on_select(result):
+            self.conn(callback=GA.add_loop_cb(_on_connection))
+
+        # First check to see if we've already pulled down the body of this
+        # message, in which case we can just return it w/o having to
+        # pull from the server again
+        if self.raw:
+            GA.loop_cb_args(callback, self.raw)
         else:
-            if self.has_fetched_body:
-                return self.body_plain if self.body_html == "" else self.body_html
-            else:
-                if self.raw is None:
-                    self.mailbox.select()
-                    typ, data = self.conn.uid("FETCH", self.uid, "(RFC822)")
-                    if typ != "OK":
-                        return None
-                    else:
-                        self.raw = email.message_from_string(data[0][1])
-                        self.charset = self.raw.get_content_charset()
-                return self._build_body_strings()
+            # Next, also check to see if we at least have a reference to the
+            # raw, underlying email message object, in which case we can save
+            # another network call to the IMAP server
+            self.mailbox.select(callback=GA.add_loop_cb(_on_select))
 
     def html_body(self, callback=None):
         """Returns the HTML version of the message body, if available
@@ -253,13 +250,14 @@ class Message(object):
 
         """
         if callback:
-            def _on_fetch_body(full_body):
-                GA.loop_cb_args(callback, None if self.body_html == "" else self.body_html)
+            def _on_fetch_raw_body(full_body):
+                self._build_body_strings()
+                GA.loop_cb_args(callback, self.body_html or None)
 
-            self.fetch_body(callback=GA.add_loop_cb(_on_fetch_body))
+            self.fetch_raw_body(callback=GA.add_loop_cb(_on_fetch_raw_body))
         else:
-            self.fetch_body()
-            return None if self.body_html == "" else self.body_html
+            self._build_body_strings()
+            return self.body_html or None
 
     def plain_body(self, callback=None):
         """Returns the plain text version of the message body, if available
@@ -273,15 +271,16 @@ class Message(object):
 
         """
         if callback:
-            def _on_fetch_body(full_body):
-                GA.loop_cb_args(callback, None if self.body_plain == "" else self.body_plain)
+            def _on_fetch_raw_body(full_body):
+                self._build_body_strings()
+                GA.loop_cb_args(callback, self.body_plain or None)
 
-            self.fetch_body(callback=GA.add_loop_cb(_on_fetch_body))
+            self.fetch_raw_body(callback=GA.add_loop_cb(_on_fetch_raw_body))
         else:
-            self.fetch_body()
-            return None if self.body_plain == "" else self.body_plain
+            self._build_body_strings()
+            return self.body_plain or None
 
-    def raw_message(self, callback=None):
+    def as_string(self, callback=None):
         """Returns a representation of the message as a raw string
 
         Lazy loads the raw text version of the email message, if it hasn't
@@ -292,14 +291,10 @@ class Message(object):
             an error fetching it
 
         """
-        if callback:
-            def _on_fetch_body(full_body):
-                GA.loop_cb_args(callback, None if self.raw is None else self.raw.as_string())
+        def _on_fetch_raw_body(raw):
+            GA.loop_cb_args(callback, raw.as_string() if raw else None)
 
-            self.fetch_body(callback=GA.add_loop_cb(_on_fetch_body))
-        else:
-            self.fetch_body()
-            return None if self.raw is None else self.raw.as_string()
+        self.fetch_raw_body(callback=GA.add_loop_cb(_on_fetch_raw_body))
 
     def is_read(self):
         """Checks to see if the message has been flaged as read
@@ -414,73 +409,67 @@ class Message(object):
             A reference to the current object
 
         """
-        if callback:
+        def _on_post_labeling(rs):
+            GA.loop_cb_args(callback, rs)
 
-            def _save_post_labeling(rs):
-                GA.loop_cb_args(callback, rs)
-
-            def _save_post_search_select(connection):
-                connection.uid("STORE", self.uid,
-                    "+X-GM-LABELS", " ".join(self.labels),
-                    callback=GA.add_loop_cb(_save_post_labeling)
-                )
-
-            def _save_message_id_search((response, cb_arg, error)):
-                typ, data = response
-                self.uid = data[0].split()[-1]
-                self.conn(callback=GA.add_loop_cb(_save_post_search_select))
-
-            def _save_post_append_select(connection):
-                connection.uid('SEARCH',
-                    '(HEADER Message-ID "' + self.message_id + '")',
-                    callback=GA.add_loop_cb(_save_message_id_search))
-
-            def _save_on_append((response, cb_arg, error)):
-                # Add error handling here!
-                if len(self.labels) == 0:
-                    # If there were no labels attached to this message, we
-                    # don't have to futz with it any more, we can just
-                    # go ahead and return back to the main process
-                    GA.loop_cb(callback)
-                else:
-                    # Otherwise, we need to search down the new UID of the
-                    # message we just added, so that we can stick the
-                    # labels to it
-                    self.conn(callback=GA.add_loop_cb(_save_post_append_select))
-
-            def _save_received_connection(connection):
-                connection.append(
-                    self.mailbox.name,
-                    '(%s)' % ' '.join(self.flags) if self.flags else "()",
-                    self.datetime(),
-                    self.raw_message(),
-                    callback=GA.add_loop_cb(_save_on_append)
-                )
-
-            def _save_on_select(msg_count):
-                self.conn(callback=GA.add_loop_cb(_save_received_connection))
-
-            def _save_on_delete(rs):
-                self.mailbox.select(callback=GA.add_loop_cb(_save_on_select))
-
-            def _save_on_fetch_body(body_string):
-                self.delete(callback=GA.add_loop_cb(_save_on_delete))
-
-            self.fetch_body(callback=GA.add_loop_cb(_save_on_fetch_body))
-        else:
-            self.fetch_body()
-            self.delete()
-            self.mailbox.select()
-
-            rs, data = self.conn().append(
-                self.mailbox.name,
-                '(%s)' % ' '.join(self.flags) if len(self.flags) > 1 else "",
-                self.datetime(),
-                self.raw_message()
+        def _on_post_search_select(connection):
+            labels_value = '(%s)' % ' '.join(self.labels) if self.labels else "()"
+            connection.uid("STORE", self.uid,
+                "+X-GM-LABELS", labels_value,
+                callback=GA.add_loop_cb(_on_post_labeling)
             )
-            return self
 
-    def replace(self, find, replace):
+        def _on_message_id_search((response, cb_arg, error)):
+            typ, data = response
+            self.uid = data[0].split()[-1]
+            self.conn(callback=GA.add_loop_cb(_on_post_search_select))
+
+        def _on_post_append_select(connection):
+            connection.uid('SEARCH',
+                '(HEADER Message-ID "' + self.message_id + '")',
+                callback=GA.add_loop_cb(_on_message_id_search))
+
+        def _on_append((response, cb_arg, error)):
+            # Add error handling here!
+            if len(self.labels) == 0:
+                # If there were no labels attached to this message, we
+                # don't have to futz with it any more, we can just
+                # go ahead and return back to the main process
+                GA.loop_cb(callback)
+            else:
+                # Otherwise, we need to search down the new UID of the
+                # message we just added, so that we can stick the
+                # labels to it
+                self.conn(callback=GA.add_loop_cb(_on_post_append_select))
+
+        def _on_received_connection(connection, raw_string):
+            connection.append(
+                self.mailbox.name,
+                '(%s)' % ' '.join(self.flags) if self.flags else "()",
+                self.datetime(),
+                raw_string,
+                callback=GA.add_loop_cb(_on_append)
+            )
+
+        def _on_select(msg_count, raw_string):
+            callback_params = dict(raw_string=raw_string)
+            self.conn(callback=GA.add_loop_cb_args(
+                _on_received_connection, callback_params)
+            )
+
+        def _on_delete(rs, raw_string):
+            callback_params = dict(raw_string=raw_string)
+            self.mailbox.select(callback=GA.add_loop_cb_args(
+                _on_select, callback_params)
+            )
+
+        def _on_as_string(raw_string):
+            callback_params = dict(raw_string=raw_string)
+            self.delete(callback=GA.add_loop_cb_args(_on_delete, callback_params))
+
+        self.as_string(callback=GA.add_loop_cb(_on_as_string))
+
+    def replace(self, find, replace, callback=None):
         """Performs a body-wide string search and replace
 
         Note that this search-and-replace is pretty dumb, and will fail
@@ -494,46 +483,18 @@ class Message(object):
             A reference to the current message object
 
         """
-        self.fetch_body()
-        encoding = self.raw.get("Content-Transfer-Encoding")
+        def _on_fetch_raw_body(raw):
+            valid_content_types = ('plain', 'html')
 
-        for part in self.raw.walk():
-            content_type = str(part.get_content_type())
-            if content_type in ('text/plain', 'text/html'):
-                section = part.get_payload(decode=True)
-                new_payload = section.replace(find, replace)
-                if encoding and encoding == "base64":
-                    new_payload = base64.b64encode(new_payload)
-                part.set_payload(new_payload)
-        self.has_fetched_body = False
-        return self
+            for valid_type in valid_content_types:
 
-    def replace_re(self, regex, replace):
-        """Replaces text in the body of the message with a RegEx
+                for part in typed_subpart_iterator(self.raw, 'text', valid_type):
+                    section_encoding = message_part_charset(part)
 
-        Note that this search-and-replace is pretty dumb, and will fail
-        in, for example, HTML messages where HTML tags would alter the search
-        string.
+                    new_payload_section = utf8_encode_message_part(self, part, section_encoding)
+                    new_payload_section = new_payload_section.replace(find, replace)
+                    part.set_payload(new_payload_section, section_encoding)
 
-        Args:
-            regex   -- A compiled regular expression to find text in the body
-                       of the current message
-            replace -- A string to use to replace matches of the regular
-                       expression
-        Returns:
-            A reference to the current message object
+            self.save(callback=callback)
 
-        """
-        self.fetch_body()
-        encoding = self.raw.get("Content-Transfer-Encoding")
-
-        for part in self.raw.walk():
-            content_type = str(part.get_content_type())
-            if content_type in ('text/plain', 'text/html'):
-                section = part.get_payload(decode=True)
-                new_payload = regex.sub(replace, section)
-                if encoding and encoding == "base64":
-                    new_payload = base64.b64encode(new_payload)
-                part.set_payload(new_payload)
-        self.has_fetched_body = False
-        return self
+        self.fetch_raw_body(callback=GA.add_loop_cb(_on_fetch_raw_body))
