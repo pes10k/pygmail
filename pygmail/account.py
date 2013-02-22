@@ -3,7 +3,6 @@ import mailbox
 import tornado
 from datetime import timedelta
 
-
 def io_loop():
     return tornado.ioloop.IOLoop.instance()
 
@@ -182,8 +181,6 @@ class Account(object):
         else:
             auth_params = self.email, self.oauth2_token
             xoauth2_string = 'user=%s\1auth=Bearer %s\1\1' % auth_params
-            if __debug__:
-                print xoauth2_string
             try:
                 self.conn.authenticate(
                     "XOAUTH2",
@@ -192,7 +189,6 @@ class Account(object):
                 )
             except:
                 loop_cb_args(callback, AuthError(""))
-
 
     def close(self):
         """Closes the IMAP connection to GMail
