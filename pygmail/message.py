@@ -50,7 +50,8 @@ def utf8_encode_message_part(message, message_part, default="ascii"):
                             that this message part was a part of
 
     Returns:
-        The payload of the email portion, encoded as UTF-8
+        The payload of the email portion, encoded as UTF-8, or a
+        UnicodeDecodeError if there was a problem decoding the message
     """
     payload = message_part.get_payload(decode=True)
     if isinstance(payload, unicode):
@@ -65,11 +66,16 @@ def utf8_encode_message_part(message, message_part, default="ascii"):
             try:
                 return unicode(payload, "utf-8")
             except UnicodeDecodeError as error:
-                print "UnicodeDecodeError in '%s': %s" % (message.message_id, error)
-            except TypeError as error:
-                print "TypeError in '%s': %s" % (message.message_id, error)
+                return error
         else:
-            return unicode(payload, "ascii", errors='replace')
+            try:
+                return unicode(payload, "ascii", errors='replace')
+            except UnicodeDecodeError as error:
+                return error
+
+
+def is_encoding_error(msg):
+    return msg.__class__ is UnicodeDecodeError
 
 
 class Message(object):
@@ -165,6 +171,7 @@ class Message(object):
         self.encoding = None
         self.body_html = None
         self.body_plain = None
+        self.encoding_error = None
 
     def __eq__(self, other):
         """ Overrides equality operator to check by uid and mailbox name """
@@ -191,11 +198,19 @@ class Message(object):
 
             for part in typed_subpart_iterator(self.raw, 'text', 'plain'):
                 section_encoding = message_part_charset(part) or self.charset
-                self.body_plain += utf8_encode_message_part(self, part, section_encoding)
+                section_text = utf8_encode_message_part(self, part, section_encoding)
+                if is_encoding_error(section_text):
+                    self.encoding_error = section_text
+                else:
+                    self.body_plain += section_text
 
             for part in typed_subpart_iterator(self.raw, 'text', 'html'):
                 section_encoding = message_part_charset(part) or self.charset
-                self.body_html += utf8_encode_message_part(self, part, section_encoding)
+                section_text = utf8_encode_message_part(self, part, section_encoding)
+                if is_encoding_error(section_text):
+                    self.encoding_error = section_text
+                else:
+                    self.body_html += section_text
 
             self.has_built_body_strings = True
 
@@ -252,12 +267,18 @@ class Message(object):
         if callback:
             def _on_fetch_raw_body(full_body):
                 self._build_body_strings()
-                GA.loop_cb_args(callback, self.body_html or None)
+                if self.encoding_error:
+                    GA.loop_cb_args(callback, self.encoding_error)
+                else:
+                    GA.loop_cb_args(callback, self.body_html or None)
 
             self.fetch_raw_body(callback=GA.add_loop_cb(_on_fetch_raw_body))
         else:
             self._build_body_strings()
-            return self.body_html or None
+            if self.encoding_error:
+                return self.encoding_error
+            else:
+                return self.body_html or None
 
     def plain_body(self, callback=None):
         """Returns the plain text version of the message body, if available
@@ -273,12 +294,18 @@ class Message(object):
         if callback:
             def _on_fetch_raw_body(full_body):
                 self._build_body_strings()
-                GA.loop_cb_args(callback, self.body_plain or None)
+                if self.encoding_error:
+                    GA.loop_cb_args(callback, self.encoding_error)
+                else:
+                    GA.loop_cb_args(callback, self.body_plain or None)
 
             self.fetch_raw_body(callback=GA.add_loop_cb(_on_fetch_raw_body))
         else:
             self._build_body_strings()
-            return self.body_plain or None
+            if self.encoding_error:
+                return self.encoding_error
+            else:
+                return self.body_plain or None
 
     def as_string(self, callback=None):
         """Returns a representation of the message as a raw string
