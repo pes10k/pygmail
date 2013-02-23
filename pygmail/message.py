@@ -1,6 +1,8 @@
 import email
 import re
 import email.utils
+import email.encoders as ENC
+from quopri import encodestring
 from email.parser import HeaderParser
 from email.Iterators import typed_subpart_iterator
 import email.header as eh
@@ -53,25 +55,43 @@ def utf8_encode_message_part(message, message_part, default="ascii"):
         The payload of the email portion, encoded as UTF-8, or a
         UnicodeDecodeError if there was a problem decoding the message
     """
+    # If we've already decoded this part of the message in a normalized
+    # UTF-8 version, we can short circuit the re-decoding process
+    # and just return the cached version
+    if hasattr(message_part, '_normalized'):
+        return message_part._normalized
+
     payload = message_part.get_payload(decode=True)
+
     if isinstance(payload, unicode):
         return payload
     else:
-        section_encoding = message_part_charset(message_part)
-        encoding = section_encoding or default
+        section_charset = message_part_charset(message_part)
+        charset = section_charset or default
 
-        if encoding and "utf-8" not in encoding:
-            return unicode(payload, encoding, errors='replace')
-        elif encoding == "utf-8":
+        # We want to normalize everything internally to be UTF-8,
+        # so if this is the first time we converted the body of the message,
+        # we need to make a note of what the original charset was, so
+        # we can re-encode to its original charset if needed
+        if not hasattr(message_part, '_orig_charset'):
+            message_part._orig_charset = charset
+            message_part.set_charset("utf-8")
+
+        if charset and "utf-8" not in charset:
+            normalized = unicode(payload, charset, errors='replace')
+        elif charset == "utf-8":
             try:
-                return unicode(payload, "utf-8")
+                normalized = unicode(payload, "utf-8")
             except UnicodeDecodeError as error:
                 return error
         else:
             try:
-                return unicode(payload, "ascii", errors='replace')
+                normalized = unicode(payload, "ascii", errors='replace')
             except UnicodeDecodeError as error:
                 return error
+
+        message_part._normalized = normalized
+        return normalized
 
 
 def is_encoding_error(msg):
@@ -504,8 +524,12 @@ class Message(object):
         string.
 
         Args:
-            find    -- the search term to look for
-            replace -- the string to replace instances of the "find" term with
+            find    -- the search term to look for as a string, or a tuple of
+                       items to replace with corresponding items in the
+                       replace tuple
+            replace -- the string to replace instances of the "find" term with,
+                       or a tuple of terms to replace the corresponding strings
+                       in the find tuple
         Returns:
             A reference to the current message object
 
@@ -516,11 +540,31 @@ class Message(object):
             for valid_type in valid_content_types:
 
                 for part in typed_subpart_iterator(self.raw, 'text', valid_type):
-                    section_encoding = message_part_charset(part)
 
-                    new_payload_section = utf8_encode_message_part(self, part, section_encoding)
-                    new_payload_section = new_payload_section.replace(find, replace)
-                    part.set_payload(new_payload_section, section_encoding)
+                    section_encoding = part['Content-Transfer-Encoding']
+                    section_charset = message_part_charset(part)
+
+                    new_payload_section = utf8_encode_message_part(self, part, section_charset)
+                    if isinstance(find, tuple) or isinstance(find, list):
+                        for i in range(0, len(find)):
+                            new_payload_section = new_payload_section.replace(find[i], replace[i])
+                    else:
+                        new_payload_section = new_payload_section.replace(find, replace)
+
+                    new_payload_section = new_payload_section.encode(part._orig_charset, errors="replace")
+
+                    if section_encoding == "quoted-printable":
+                        new_payload_section = encodestring(new_payload_section, quotetabs=0)
+                        part.set_payload(new_payload_section, part._orig_charset)
+                    elif section_encoding == "base64":
+                        part.set_payload(new_payload_section, part._orig_charset)
+                        ENC.encode_base64(part)
+                    elif section_encoding in ('7bit', '8bit'):
+                        part.set_payload(new_payload_section, part._orig_charset)
+                        ENC.encode_7or8bit(part)
+
+                    del part._normalized
+                    del part._orig_charset
 
             self.save(callback=callback)
 

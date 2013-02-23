@@ -7,6 +7,7 @@ import account as ga
 def parse_fetch_request(response, size=2):
     length = len(response)
     if length % size != 0:
+        print response
         raise Exception("Invalid chunk size requested, %d sized chunks from %d sized list" % (size, length))
     else:
         i = 0
