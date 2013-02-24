@@ -78,7 +78,12 @@ def utf8_encode_message_part(message, message_part, default="ascii"):
             message_part.set_charset("utf-8")
 
         if charset and "utf-8" not in charset:
-            normalized = unicode(payload, charset, errors='replace')
+            try:
+                normalized = unicode(payload, charset, errors='replace')
+            except LookupError as error:
+                return error
+            except UnicodeDecodeError as error:
+                return error
         elif charset == "utf-8":
             try:
                 normalized = unicode(payload, "utf-8")
@@ -95,7 +100,7 @@ def utf8_encode_message_part(message, message_part, default="ascii"):
 
 
 def is_encoding_error(msg):
-    return msg.__class__ is UnicodeDecodeError
+    return msg.__class__ is UnicodeDecodeError or msg.__class__ is LookupError
 
 
 class Message(object):
