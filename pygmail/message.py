@@ -1,8 +1,8 @@
 import email
 import re
 import email.utils
-import email.encoders as ENC
 from quopri import encodestring
+import email.encoders as ENC
 from email.parser import HeaderParser
 from email.Iterators import typed_subpart_iterator
 import email.header as eh
@@ -40,7 +40,7 @@ def message_in_list(message, message_list):
     return False
 
 
-def utf8_encode_message_part(message, message_part, default="ascii"):
+def utf8_encode_message_part(message_part, default="ascii"):
     """Returns the payload of a part of an email, encoded as UTF-8
 
     Normalizes the text / contents of an email message to be UTF-8, regardless
@@ -48,7 +48,7 @@ def utf8_encode_message_part(message, message_part, default="ascii"):
 
     Arguments:
         message_part     -- a section of an email message
-        message_encoding -- the advertised encoding of the entire message
+        default          -- the advertised encoding of the entire message
                             that this message part was a part of
 
     Returns:
@@ -223,7 +223,7 @@ class Message(object):
 
             for part in typed_subpart_iterator(self.raw, 'text', 'plain'):
                 section_encoding = message_part_charset(part) or self.charset
-                section_text = utf8_encode_message_part(self, part, section_encoding)
+                section_text = utf8_encode_message_part(part, section_encoding)
                 if is_encoding_error(section_text):
                     self.encoding_error = section_text
                 else:
@@ -231,7 +231,7 @@ class Message(object):
 
             for part in typed_subpart_iterator(self.raw, 'text', 'html'):
                 section_encoding = message_part_charset(part) or self.charset
-                section_text = utf8_encode_message_part(self, part, section_encoding)
+                section_text = utf8_encode_message_part(part, section_encoding)
                 if is_encoding_error(section_text):
                     self.encoding_error = section_text
                 else:
@@ -422,6 +422,8 @@ class Message(object):
             def _on_search_for_message_complete(rs):
                 response, cb_arg, error = rs
                 typ, data = response
+                if typ != "OK" or not data:
+                    print response
                 deleted_uid = data[0].split()[-1]
                 self.conn(callback=lambda conn: GA.io_loop().add_callback(lambda: _on_received_connection_4(conn, deleted_uid)))
 
@@ -547,9 +549,17 @@ class Message(object):
                 for part in typed_subpart_iterator(self.raw, 'text', valid_type):
 
                     section_encoding = part['Content-Transfer-Encoding']
-                    section_charset = message_part_charset(part)
 
-                    new_payload_section = utf8_encode_message_part(self, part, section_charset)
+                    # If the message section doesn't advertise an encoding,
+                    # then default to quoted printable.  Otherwise the module
+                    # will default to base64, which can cause problems
+                    if not section_encoding:
+                        part.add_header('Content-Transfer-Encoding', "quoted-printable")
+                        section_encoding = "quoted-printable"
+
+                    section_charset = message_part_charset(part)
+                    new_payload_section = utf8_encode_message_part(part, section_charset)
+
                     if isinstance(find, tuple) or isinstance(find, list):
                         for i in range(0, len(find)):
                             new_payload_section = new_payload_section.replace(find[i], replace[i])

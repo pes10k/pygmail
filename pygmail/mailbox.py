@@ -241,6 +241,10 @@ class Mailbox(object):
             messages that matched a provided uid
         """
         def _on_fetch((response, cb_arg, error)):
+            if not response:
+                if __debug__:
+                    print response
+                    ga.loop_cb_args(callback, None)
             typ, data = response
             if typ != "OK" or not data:
                 ga.loop_cb_args(callback, None)
