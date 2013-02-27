@@ -10,9 +10,14 @@ from pygmail.address import Address
 import account as GA
 
 
-def message_part_charset(part):
+def message_part_charset(part, message):
     """Get the charset of the a part of the message"""
-    return part.get_content_charset() or part.get_charset()
+    part_charset = part.get_content_charset() or part.get_charset()
+    if part_charset:
+        return part_charset
+
+    message_charset = message.get_content_charset() or message.get_charset()
+    return message_charset or "ascii"
 
 
 def message_in_list(message, message_list):
@@ -40,7 +45,7 @@ def message_in_list(message, message_list):
     return False
 
 
-def utf8_encode_message_part(message_part, default="ascii"):
+def utf8_encode_message_part(message_part, message, default="ascii"):
     """Returns the payload of a part of an email, encoded as UTF-8
 
     Normalizes the text / contents of an email message to be UTF-8, regardless
@@ -64,9 +69,10 @@ def utf8_encode_message_part(message_part, default="ascii"):
     payload = message_part.get_payload(decode=True)
 
     if isinstance(payload, unicode):
+        message_part._orig_charset = "utf-8"
         return payload
     else:
-        section_charset = message_part_charset(message_part)
+        section_charset = message_part_charset(message_part, message)
         charset = section_charset or default
 
         # We want to normalize everything internally to be UTF-8,
@@ -222,16 +228,16 @@ class Message(object):
             self.body_html = u''
 
             for part in typed_subpart_iterator(self.raw, 'text', 'plain'):
-                section_encoding = message_part_charset(part) or self.charset
-                section_text = utf8_encode_message_part(part, section_encoding)
+                section_encoding = message_part_charset(part, self.raw) or self.charset
+                section_text = utf8_encode_message_part(part, self.raw, section_encoding)
                 if is_encoding_error(section_text):
                     self.encoding_error = section_text
                 else:
                     self.body_plain += section_text
 
             for part in typed_subpart_iterator(self.raw, 'text', 'html'):
-                section_encoding = message_part_charset(part) or self.charset
-                section_text = utf8_encode_message_part(part, section_encoding)
+                section_encoding = message_part_charset(part, self.raw) or self.charset
+                section_text = utf8_encode_message_part(part, self.raw, section_encoding)
                 if is_encoding_error(section_text):
                     self.encoding_error = section_text
                 else:
@@ -557,8 +563,8 @@ class Message(object):
                         part.add_header('Content-Transfer-Encoding', "quoted-printable")
                         section_encoding = "quoted-printable"
 
-                    section_charset = message_part_charset(part)
-                    new_payload_section = utf8_encode_message_part(part, section_charset)
+                    section_charset = message_part_charset(part, self.raw)
+                    new_payload_section = utf8_encode_message_part(part, self.raw, section_charset)
 
                     if isinstance(find, tuple) or isinstance(find, list):
                         for i in range(0, len(find)):
