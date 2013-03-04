@@ -472,22 +472,12 @@ class Message(object):
                            callback=add_loop_cb(_on_message_id_search))
 
         def _on_append((response, cb_arg, error)):
-            # Add error handling here!
-            if len(self.labels) == 0:
-                # If there were no labels attached to this message, we
-                # don't have to futz with it any more, we can just
-                # go ahead and return back to the main process
-                loop_cb(callback)
-            else:
-                # Otherwise, we need to search down the new UID of the
-                # message we just added, so that we can stick the
-                # labels to it
-                self.conn(callback=add_loop_cb(_on_post_append_select))
+            self.conn(callback=add_loop_cb(_on_post_append_select))
 
         def _on_received_connection(connection, raw_string):
             connection.append(
                 self.mailbox.name,
-                '(%s)' % ' '.join(self.flags) if self.flags else "()",
+                '(%s)' % (' '.join(self.flags),) if self.flags else "()",
                 self.datetime(),
                 raw_string,
                 callback=add_loop_cb(_on_append)
