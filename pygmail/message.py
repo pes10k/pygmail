@@ -1,23 +1,27 @@
 import email
 import re
 import email.utils
-from quopri import encodestring
+import email.header as eh
 import email.encoders as ENC
+from quopri import encodestring
 from email.parser import HeaderParser
 from email.Iterators import typed_subpart_iterator
-import email.header as eh
 from pygmail.address import Address
-import account as GA
+from utilities import loop_cb_args, add_loop_cb, add_loop_cb_args, loop_cb
 
 
 def message_part_charset(part, message):
     """Get the charset of the a part of the message"""
-    part_charset = part.get_content_charset() or part.get_charset()
-    if part_charset:
-        return part_charset
-
-    message_charset = message.get_content_charset() or message.get_charset()
-    return message_charset or "ascii"
+    message_part_charset = part.get_content_charset() or part.get_charset()
+    if not message_part_charset:
+        message_part_charset = message.get_content_charset() or message.get_charset()
+    if not message_part_charset:
+        return "ascii"
+    else:
+        # It is sometimes possible for the encoding section to include
+        # information we're not interested in, such as mime verison.
+        # So, we strip that off here if its included
+        return message_part_charset.split(" ")[0]
 
 
 def message_in_list(message, message_list):
@@ -207,8 +211,8 @@ class Message(object):
     def __eq__(self, other):
         """ Overrides equality operator to check by uid and mailbox name """
         return (isinstance(other, Message) and
-            self.uid == other.uid and
-            self.mailbox.name == other.mailbox.name)
+                self.uid == other.uid and
+                self.mailbox.name == other.mailbox.name)
 
     @property
     def from_address(self):
@@ -260,29 +264,29 @@ class Message(object):
         def _on_fetch((response, cb_arg, error)):
             typ, data = response
             if typ != "OK":
-                GA.loop_cb_args(callback, None)
+                loop_cb_args(callback, None)
             else:
                 self.raw = email.message_from_string(data[0][1])
                 self.charset = self.raw.get_content_charset()
-                GA.loop_cb_args(callback, self.raw)
+                loop_cb_args(callback, self.raw)
 
         def _on_connection(connection):
             connection.uid("FETCH", self.uid, "(RFC822)",
-                callback=GA.add_loop_cb(_on_fetch))
+                           callback=add_loop_cb(_on_fetch))
 
         def _on_select(result):
-            self.conn(callback=GA.add_loop_cb(_on_connection))
+            self.conn(callback=add_loop_cb(_on_connection))
 
         # First check to see if we've already pulled down the body of this
         # message, in which case we can just return it w/o having to
         # pull from the server again
         if self.raw:
-            GA.loop_cb_args(callback, self.raw)
+            loop_cb_args(callback, self.raw)
         else:
             # Next, also check to see if we at least have a reference to the
             # raw, underlying email message object, in which case we can save
             # another network call to the IMAP server
-            self.mailbox.select(callback=GA.add_loop_cb(_on_select))
+            self.mailbox.select(callback=add_loop_cb(_on_select))
 
     def html_body(self, callback=None):
         """Returns the HTML version of the message body, if available
@@ -299,11 +303,11 @@ class Message(object):
             def _on_fetch_raw_body(full_body):
                 self._build_body_strings()
                 if self.encoding_error:
-                    GA.loop_cb_args(callback, self.encoding_error)
+                    loop_cb_args(callback, self.encoding_error)
                 else:
-                    GA.loop_cb_args(callback, self.body_html or None)
+                    loop_cb_args(callback, self.body_html or None)
 
-            self.fetch_raw_body(callback=GA.add_loop_cb(_on_fetch_raw_body))
+            self.fetch_raw_body(callback=add_loop_cb(_on_fetch_raw_body))
         else:
             self._build_body_strings()
             if self.encoding_error:
@@ -326,11 +330,11 @@ class Message(object):
             def _on_fetch_raw_body(full_body):
                 self._build_body_strings()
                 if self.encoding_error:
-                    GA.loop_cb_args(callback, self.encoding_error)
+                    loop_cb_args(callback, self.encoding_error)
                 else:
-                    GA.loop_cb_args(callback, self.body_plain or None)
+                    loop_cb_args(callback, self.body_plain or None)
 
-            self.fetch_raw_body(callback=GA.add_loop_cb(_on_fetch_raw_body))
+            self.fetch_raw_body(callback=add_loop_cb(_on_fetch_raw_body))
         else:
             self._build_body_strings()
             if self.encoding_error:
@@ -350,9 +354,9 @@ class Message(object):
 
         """
         def _on_fetch_raw_body(raw):
-            GA.loop_cb_args(callback, raw.as_string() if raw else None)
+            loop_cb_args(callback, raw.as_string() if raw else None)
 
-        self.fetch_raw_body(callback=GA.add_loop_cb(_on_fetch_raw_body))
+        self.fetch_raw_body(callback=add_loop_cb(_on_fetch_raw_body))
 
     def is_read(self):
         """Checks to see if the message has been flaged as read
@@ -384,78 +388,57 @@ class Message(object):
             A reference to the current object
 
         """
-        if not callback:
-            self.mailbox.select()
+        def _on_recevieved_connection_6(connection):
+            connection.select(self.mailbox.name,
+                              callback=add_loop_cb(callback))
 
-            # First move the message we're trying to delete to the gmail
-            # trash.
-            self.conn().uid('COPY', self.uid, "[Gmail]/Trash")
+        def _on_expunge_complete((response, cb_arg, error)):
+            self.conn(callback=add_loop_cb(_on_recevieved_connection_6))
 
-            # Then delete the message from the current mailbox
-            self.conn().uid('STORE', self.uid, '+FLAGS', '(\Deleted)')
-            self.conn().expunge()
+        def _on_recevieved_connection_5(connection):
+            connection.expunge(callback=add_loop_cb(_on_expunge_complete))
 
-            self.conn().select("[Gmail]/Trash")
-            deleted_uid = self.conn().uid('SEARCH',
-                '(HEADER MESSAGE-ID "' + self.message_id + '")')[0].split()[-1]
-            rs, data = self.conn().uid('STORE', deleted_uid, '+FLAGS',
-                '\\Deleted')
-            self.conn().expunge()
+        def _on_delete_complete((response, cb_arg, error)):
+            self.conn(callback=add_loop_cb(_on_recevieved_connection_5))
 
-            # Last, reselect the current mailbox.  We do this directly, instead
-            # of through the mailbox.select() method, since we didn't hand the
-            # token off to the "Trash" mailbox above.
-            self.conn().select(self.mailbox.name)
-            return self
-        else:
-            def _on_recevieved_connection_6(connection):
-                connection.select(self.mailbox.name,
-                    callback=GA.add_loop_cb(callback))
+        def _on_received_connection_4(connection, deleted_uid):
+            connection.uid('STORE', deleted_uid, '+FLAGS',
+                           '\\Deleted',
+                           callback=add_loop_cb(_on_delete_complete))
 
-            def _on_expunge_complete((response, cb_arg, error)):
-                self.conn(callback=GA.add_loop_cb(_on_recevieved_connection_6))
+        def _on_search_for_message_complete(rs):
+            response, cb_arg, error = rs
+            typ, data = response
+            if typ != "OK" or not data:
+                callback(None)
+                print response
+            deleted_uid = data[0].split()[-1]
+            callback_params = dict(deleted_uid=deleted_uid)
+            self.conn(callback=add_loop_cb_args(_on_received_connection_4, callback_params))
 
-            def _on_recevieved_connection_5(connection):
-                connection.expunge(callback=GA.add_loop_cb(_on_expunge_complete))
+        def _on_received_connection_3(connection):
+            connection.uid('SEARCH',
+                           '(HEADER Message-ID "' + self.message_id + '")',
+                           callback=add_loop_cb(_on_search_for_message_complete))
 
-            def _on_delete_complete((response, cb_arg, error)):
-                self.conn(callback=GA.add_loop_cb(_on_recevieved_connection_5))
+        def _on_trash_selected((response, cb_arg, error)):
+            self.conn(callback=add_loop_cb(_on_received_connection_3))
 
-            def _on_received_connection_4(connection, deleted_uid):
-                connection.uid('STORE', deleted_uid, '+FLAGS',
-                    '\\Deleted', callback=GA.add_loop_cb(_on_delete_complete))
+        def _on_received_connection_2(connection):
+            connection.select("[Gmail]/Trash",
+                              callback=add_loop_cb(_on_trash_selected))
 
-            def _on_search_for_message_complete(rs):
-                response, cb_arg, error = rs
-                typ, data = response
-                if typ != "OK" or not data:
-                    print response
-                deleted_uid = data[0].split()[-1]
-                self.conn(callback=lambda conn: GA.io_loop().add_callback(lambda: _on_received_connection_4(conn, deleted_uid)))
+        def _on_message_moved((response, cb_arg, error)):
+            self.conn(callback=add_loop_cb(_on_received_connection_2))
 
-            def _on_received_connection_3(connection):
-                connection.uid('SEARCH',
-                    '(HEADER Message-ID "' + self.message_id + '")',
-                    callback=GA.add_loop_cb(_on_search_for_message_complete))
+        def _on_received_connection(connection):
+            connection.uid('COPY', self.uid, "[Gmail]/Trash",
+                           callback=add_loop_cb(_on_message_moved))
 
-            def _on_trash_selected((response, cb_arg, error)):
-                self.conn(callback=GA.add_loop_cb(_on_received_connection_3))
+        def _on_mailbox_select(msg_count):
+            self.conn(callback=add_loop_cb(_on_received_connection))
 
-            def _on_received_connection_2(connection):
-                connection.select("[Gmail]/Trash",
-                    callback=GA.add_loop_cb(_on_trash_selected))
-
-            def _on_message_moved((response, cb_arg, error)):
-                self.conn(callback=GA.add_loop_cb(_on_received_connection_2))
-
-            def _on_received_connection(connection):
-                connection.uid('COPY', self.uid, "[Gmail]/Trash",
-                    callback=GA.add_loop_cb(_on_message_moved))
-
-            def _on_mailbox_select(msg_count):
-                self.conn(callback=GA.add_loop_cb(_on_received_connection))
-
-            self.mailbox.select(callback=GA.add_loop_cb(_on_mailbox_select))
+        self.mailbox.select(callback=add_loop_cb(_on_mailbox_select))
 
     def save(self, callback=None):
         """Copies changes to the current message to the server
@@ -470,24 +453,23 @@ class Message(object):
 
         """
         def _on_post_labeling(rs):
-            GA.loop_cb_args(callback, rs)
+            loop_cb_args(callback, rs)
 
         def _on_post_search_select(connection):
             labels_value = '(%s)' % ' '.join(self.labels) if self.labels else "()"
             connection.uid("STORE", self.uid,
-                "+X-GM-LABELS", labels_value,
-                callback=GA.add_loop_cb(_on_post_labeling)
-            )
+                           "+X-GM-LABELS", labels_value,
+                           callback=add_loop_cb(_on_post_labeling))
 
         def _on_message_id_search((response, cb_arg, error)):
             typ, data = response
             self.uid = data[0].split()[-1]
-            self.conn(callback=GA.add_loop_cb(_on_post_search_select))
+            self.conn(callback=add_loop_cb(_on_post_search_select))
 
         def _on_post_append_select(connection):
             connection.uid('SEARCH',
-                '(HEADER Message-ID "' + self.message_id + '")',
-                callback=GA.add_loop_cb(_on_message_id_search))
+                           '(HEADER Message-ID "' + self.message_id + '")',
+                           callback=add_loop_cb(_on_message_id_search))
 
         def _on_append((response, cb_arg, error)):
             # Add error handling here!
@@ -495,12 +477,12 @@ class Message(object):
                 # If there were no labels attached to this message, we
                 # don't have to futz with it any more, we can just
                 # go ahead and return back to the main process
-                GA.loop_cb(callback)
+                loop_cb(callback)
             else:
                 # Otherwise, we need to search down the new UID of the
                 # message we just added, so that we can stick the
                 # labels to it
-                self.conn(callback=GA.add_loop_cb(_on_post_append_select))
+                self.conn(callback=add_loop_cb(_on_post_append_select))
 
         def _on_received_connection(connection, raw_string):
             connection.append(
@@ -508,26 +490,24 @@ class Message(object):
                 '(%s)' % ' '.join(self.flags) if self.flags else "()",
                 self.datetime(),
                 raw_string,
-                callback=GA.add_loop_cb(_on_append)
+                callback=add_loop_cb(_on_append)
             )
 
         def _on_select(msg_count, raw_string):
             callback_params = dict(raw_string=raw_string)
-            self.conn(callback=GA.add_loop_cb_args(
-                _on_received_connection, callback_params)
-            )
+            self.conn(callback=add_loop_cb_args(_on_received_connection,
+                                                callback_params))
 
         def _on_delete(rs, raw_string):
             callback_params = dict(raw_string=raw_string)
-            self.mailbox.select(callback=GA.add_loop_cb_args(
-                _on_select, callback_params)
-            )
+            self.mailbox.select(callback=add_loop_cb_args(_on_select,
+                                                          callback_params))
 
         def _on_as_string(raw_string):
             callback_params = dict(raw_string=raw_string)
-            self.delete(callback=GA.add_loop_cb_args(_on_delete, callback_params))
+            self.delete(callback=add_loop_cb_args(_on_delete, callback_params))
 
-        self.as_string(callback=GA.add_loop_cb(_on_as_string))
+        self.as_string(callback=add_loop_cb(_on_as_string))
 
     def replace(self, find, replace, callback=None):
         """Performs a body-wide string search and replace
@@ -589,4 +569,4 @@ class Message(object):
 
             self.save(callback=callback)
 
-        self.fetch_raw_body(callback=GA.add_loop_cb(_on_fetch_raw_body))
+        self.fetch_raw_body(callback=add_loop_cb(_on_fetch_raw_body))

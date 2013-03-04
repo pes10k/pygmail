@@ -1,7 +1,7 @@
 import re
 import string
 import message as gm
-import account as ga
+from utilities import loop_cb_args, add_loop_cb
 
 
 def parse_fetch_request(response, size=2):
@@ -99,14 +99,14 @@ class Mailbox(object):
             typ, data = response
             if typ == "OK":
                 self.account.last_viewed_mailbox = self
-                ga.loop_cb_args(callback, Mailbox.COUNT_PATTERN.sub("", str(data)))
+                loop_cb_args(callback, Mailbox.COUNT_PATTERN.sub("", str(data)))
             else:
-                ga.loop_cb_args(callback, None)
+                loop_cb_args(callback, None)
 
         def _on_connection(connection):
-            connection.select(mailbox=self.name, callback=ga.add_loop_cb(_on_select_complete))
+            connection.select(mailbox=self.name, callback=add_loop_cb(_on_select_complete))
 
-        self.account.connection(callback=ga.add_loop_cb(_on_connection))
+        self.account.connection(callback=add_loop_cb(_on_connection))
 
     def select(self, callback=None):
         """Sets this mailbox as the current active one on the IMAP connection
@@ -122,12 +122,12 @@ class Mailbox(object):
         """
         def _on_count_complete(num):
             self.account.last_viewed_mailbox = self
-            ga.loop_cb_args(callback, True)
+            loop_cb_args(callback, True)
 
         if self is self.account.last_viewed_mailbox:
-            ga.loop_cb_args(callback, False)
+            loop_cb_args(callback, False)
         else:
-            self.count(callback=ga.add_loop_cb(_on_count_complete))
+            self.count(callback=add_loop_cb(_on_count_complete))
 
     def search(self, term, limit=100, offset=0, only_uids=False, callback=None):
         """Searches for messages in the inbox that contain a given phrase
@@ -159,28 +159,28 @@ class Mailbox(object):
         """
         def _on_search((response, cb_arg, error)):
             if not response:
-                ga.loop_cb_args(callback, [])
+                loop_cb_args(callback, [])
                 return
 
             typ, data = response
 
             if typ != "OK":
-                ga.loop_cb_args(callback, [])
+                loop_cb_args(callback, [])
                 return
 
             ids = string.split(data[0])
             ids_to_fetch = page_from_list(ids, limit, offset)
             self.messages_by_id(ids_to_fetch, only_uids=only_uids,
-                                callback=ga.add_loop_cb(callback))
+                                callback=add_loop_cb(callback))
 
         def _on_connection(connection):
             rs, data = connection.search(None, 'X-GM-RAW', term,
-                                         callback=ga.add_loop_cb(_on_search))
+                                         callback=add_loop_cb(_on_search))
 
         def _on_mailbox_selected(was_changed):
-            self.account.connection(callback=ga.add_loop_cb(_on_connection))
+            self.account.connection(callback=add_loop_cb(_on_connection))
 
-        self.select(callback=ga.add_loop_cb(_on_mailbox_selected))
+        self.select(callback=add_loop_cb(_on_mailbox_selected))
 
     def messages(self, limit=100, offset=0, only_uids=False, callback=None):
         """Returns a list of all the messages in the inbox
@@ -207,25 +207,25 @@ class Mailbox(object):
 
         """
         def _on_messages_by_id(messages):
-            ga.loop_cb_args(callback, messages)
+            loop_cb_args(callback, messages)
 
         def _on_search((response, cb_arg, error)):
             typ, data = response
             if typ != "OK":
-                ga.loop_cb_args(callback, None)
+                loop_cb_args(callback, None)
 
             ids = string.split(data[0])
             ids_to_fetch = page_from_list(ids, limit, offset)
             self.messages_by_id(ids_to_fetch, only_uids=only_uids,
-                                callback=ga.add_loop_cb(_on_messages_by_id))
+                                callback=add_loop_cb(_on_messages_by_id))
 
         def _on_connection(connection):
-            connection.search(None, 'ALL', callback=ga.add_loop_cb(_on_search))
+            connection.search(None, 'ALL', callback=add_loop_cb(_on_search))
 
         def _on_select_complete(result):
-            self.account.connection(callback=ga.add_loop_cb(_on_connection))
+            self.account.connection(callback=add_loop_cb(_on_connection))
 
-        self.select(callback=ga.add_loop_cb(_on_select_complete))
+        self.select(callback=add_loop_cb(_on_select_complete))
 
     def fetch_all(self, uids, callback=None, include_body=False):
         """Returns a list of messages, each specified by their UID
@@ -248,18 +248,18 @@ class Mailbox(object):
             if not response:
                 if __debug__:
                     print error
-                ga.loop_cb_args(callback, None)
+                loop_cb_args(callback, None)
                 return
 
             typ, data = response
             if typ != "OK" or not data:
-                ga.loop_cb_args(callback, None)
+                loop_cb_args(callback, None)
             else:
                 messages = []
                 for msg_parts in parse_fetch_request(data):
                     flags, body = msg_parts
                     messages.append(gm.Message(body, self, full_body=include_body, flags=flags))
-                ga.loop_cb_args(callback, messages)
+                loop_cb_args(callback, messages)
 
         def _on_connection(connection):
             if include_body:
@@ -267,15 +267,15 @@ class Mailbox(object):
             else:
                 request = '(X-GM-MSGID UID FLAGS X-GM-LABELS BODY.PEEK[HEADER.FIELDS (FROM CC TO SUBJECT DATE MESSAGE-ID)])'
             connection.uid("FETCH", ",".join(uids), request,
-                           callback=ga.add_loop_cb(_on_fetch))
+                           callback=add_loop_cb(_on_fetch))
 
         def _on_select(result):
-            self.account.connection(callback=ga.add_loop_cb(_on_connection))
+            self.account.connection(callback=add_loop_cb(_on_connection))
 
         if uids:
-            self.select(callback=ga.add_loop_cb(_on_select))
+            self.select(callback=add_loop_cb(_on_select))
         else:
-            ga.loop_cb_args(callback, None)
+            loop_cb_args(callback, None)
 
     def fetch(self, uid, callback=None, include_body=False):
         """Returns a single message from the mailbox by UID
@@ -296,14 +296,14 @@ class Mailbox(object):
             if typ != "OK" or not data:
                 if __debug__:
                     print error
-                ga.loop_cb_args(callback, None)
+                loop_cb_args(callback, None)
             else:
                 for msg_parts in parse_fetch_request(data):
                     flags, body = msg_parts
-                    ga.loop_cb_args(callback,
-                                    gm.Message(body, self,
-                                               full_body=include_body,
-                                               flags=flags))
+                    loop_cb_args(callback,
+                                 gm.Message(body, self,
+                                            full_body=include_body,
+                                            flags=flags))
 
         def _on_connection(connection):
             if include_body:
@@ -312,12 +312,12 @@ class Mailbox(object):
                 request = '(X-GM-MSGID UID FLAGS X-GM-LABELS BODY.PEEK[HEADER.FIELDS (FROM CC TO SUBJECT DATE MESSAGE-ID)])'
 
             connection.uid("FETCH", uid, request,
-                           callback=ga.add_loop_cb(_on_fetch))
+                           callback=add_loop_cb(_on_fetch))
 
         def _on_select(result):
-            self.account.connection(callback=ga.add_loop_cb(_on_connection))
+            self.account.connection(callback=add_loop_cb(_on_connection))
 
-        self.select(callback=ga.add_loop_cb(_on_select))
+        self.select(callback=add_loop_cb(_on_select))
 
     def messages_by_id(self, ids, only_uids=False, callback=None):
         """Fetches messages in the mailbox by their id
@@ -339,27 +339,27 @@ class Mailbox(object):
         # If we were told to fetch no messages, fast "callback" and don't
         # bother doing any network io
         if len(ids) == 0:
-            ga.loop_cb_args(callback, [])
+            loop_cb_args(callback, [])
         else:
             def _on_fetch((response, cb_arg, error)):
                 typ, data = response
                 if only_uids:
-                    ga.loop_cb_args(callback, [string.split(elm, " ")[4][:-1] for elm in data])
+                    loop_cb_args(callback, [string.split(elm, " ")[4][:-1] for elm in data])
                 else:
                     messages = []
                     for msg_parts in parse_fetch_request(data):
                         flags, body = msg_parts
                         messages.append(gm.Message(body, self, flags=flags))
-                    ga.loop_cb_args(callback, messages)
+                    loop_cb_args(callback, messages)
 
             def _on_connection(connection):
                 if only_uids:
                     request = '(X-GM-MSGID UID)'
                 else:
                     request = '(X-GM-MSGID UID FLAGS X-GM-LABELS BODY.PEEK[HEADER.FIELDS (FROM CC TO SUBJECT DATE MESSAGE-ID)])'
-                connection.fetch(",".join(ids), request, callback=ga.add_loop_cb(_on_fetch))
+                connection.fetch(",".join(ids), request, callback=add_loop_cb(_on_fetch))
 
             def _on_select(result):
-                self.account.connection(callback=ga.add_loop_cb(_on_connection))
+                self.account.connection(callback=add_loop_cb(_on_connection))
 
-            self.select(callback=ga.add_loop_cb(_on_select))
+            self.select(callback=add_loop_cb(_on_select))

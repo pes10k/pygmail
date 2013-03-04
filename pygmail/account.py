@@ -1,31 +1,6 @@
 import imaplib2
 import mailbox
-import tornado
-from datetime import timedelta
-
-def io_loop():
-    return tornado.ioloop.IOLoop.instance()
-
-
-def loop_cb(callback):
-    io_loop().add_callback(callback)
-
-
-def loop_cb_args_delayed(callback, arg, secs=3):
-    exe_time = timedelta(seconds=secs)
-    loop_cb(io_loop().add_timeout(exe_time, lambda: callback(arg)))
-
-
-def loop_cb_args(callback, arg):
-    loop_cb(lambda: callback(arg))
-
-
-def add_loop_cb(callback):
-    return lambda arg: loop_cb_args(callback, arg)
-
-
-def add_loop_cb_args(callback, args):
-    return lambda value: loop_cb(lambda: callback(value, **args))
+from utilities import loop_cb_args, add_loop_cb
 
 
 def is_auth_error(response):
@@ -149,7 +124,7 @@ class Account(object):
                 loop_cb_args(callback, None)
 
         self.mailboxes(callback=add_loop_cb(_retreived_mailboxes),
-            include_meta=include_meta)
+                       include_meta=include_meta)
 
     def connection(self, callback=None):
         """Creates an authenticated connection to gmail over IMAP
