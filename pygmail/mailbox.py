@@ -232,11 +232,12 @@ class Mailbox(object):
             if not register_callback_if_error(imap_response, callback):
                 data = extract_data(imap_response)
                 messages = []
-                for msg_parts in parse_fetch_request(data):
-                    flags, body = msg_parts
-                    messages.append(GM.Message(body, self,
-                                               full_body=include_body,
-                                               flags=flags))
+                if len(data) > 1:
+                    for msg_parts in parse_fetch_request(data):
+                        flags, body = msg_parts
+                        messages.append(GM.Message(body, self,
+                                                   full_body=include_body,
+                                                   flags=flags))
                 loop_cb_args(callback, messages)
 
         def _on_connection(connection):
