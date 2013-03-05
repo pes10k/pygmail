@@ -1,13 +1,15 @@
 import re
 import string
-import message as gm
-from utilities import loop_cb_args, add_loop_cb
+import message as GM
+from pygmail.utilities import loop_cb_args, add_loop_cb, extract_data
+from pygmail.errors import register_callback_if_error
 
 
 def parse_fetch_request(response, size=2):
     length = len(response)
-    if length % size != 0:
-        print response
+    if length % size != 0 or response[0] is None:
+        if __debug__:
+            print response
         raise Exception("Invalid chunk size requested, %d sized chunks from %d sized list" % (size, length))
     else:
         i = 0
@@ -95,16 +97,15 @@ class Mailbox(object):
             error
 
         """
-        def _on_select_complete((response, cb_arg, error)):
-            typ, data = response
-            if typ == "OK":
+        def _on_select_complete(imap_response):
+            if not register_callback_if_error(imap_response, callback):
+                data = extract_data(imap_response)
                 self.account.last_viewed_mailbox = self
                 loop_cb_args(callback, Mailbox.COUNT_PATTERN.sub("", str(data)))
-            else:
-                loop_cb_args(callback, None)
 
         def _on_connection(connection):
-            connection.select(mailbox=self.name, callback=add_loop_cb(_on_select_complete))
+            connection.select(mailbox=self.name,
+                              callback=add_loop_cb(_on_select_complete))
 
         self.account.connection(callback=add_loop_cb(_on_connection))
 
@@ -151,27 +152,16 @@ class Mailbox(object):
                          be returned, instead of full message headers.
 
         Returns:
-            A two index tupple.  The element in the first index is a
-            list of zero or more pygmail.message.Message objects (or uids if
-            only_uids is TRUE), or None if no information could be found about
-            the mailbox.
-
+            A list of messages or uids (depending on the call arguments) in case
+            of success, and an IMAPError object in all other cases.
         """
-        def _on_search((response, cb_arg, error)):
-            if not response:
-                loop_cb_args(callback, [])
-                return
-
-            typ, data = response
-
-            if typ != "OK":
-                loop_cb_args(callback, [])
-                return
-
-            ids = string.split(data[0])
-            ids_to_fetch = page_from_list(ids, limit, offset)
-            self.messages_by_id(ids_to_fetch, only_uids=only_uids,
-                                callback=add_loop_cb(callback))
+        def _on_search(imap_response):
+            if not register_callback_if_error(imap_response, callback):
+                data = extract_data(imap_response)
+                ids = string.split(data[0])
+                ids_to_fetch = page_from_list(ids, limit, offset)
+                self.messages_by_id(ids_to_fetch, only_uids=only_uids,
+                                    callback=add_loop_cb(callback))
 
         def _on_connection(connection):
             rs, data = connection.search(None, 'X-GM-RAW', term,
@@ -209,15 +199,13 @@ class Mailbox(object):
         def _on_messages_by_id(messages):
             loop_cb_args(callback, messages)
 
-        def _on_search((response, cb_arg, error)):
-            typ, data = response
-            if typ != "OK":
-                loop_cb_args(callback, None)
-
-            ids = string.split(data[0])
-            ids_to_fetch = page_from_list(ids, limit, offset)
-            self.messages_by_id(ids_to_fetch, only_uids=only_uids,
-                                callback=add_loop_cb(_on_messages_by_id))
+        def _on_search(imap_response):
+            if not register_callback_if_error(imap_response, callback):
+                data = extract_data(imap_response)
+                ids = string.split(data[0])
+                ids_to_fetch = page_from_list(ids, limit, offset)
+                self.messages_by_id(ids_to_fetch, only_uids=only_uids,
+                                    callback=add_loop_cb(_on_messages_by_id))
 
         def _on_connection(connection):
             connection.search(None, 'ALL', callback=add_loop_cb(_on_search))
@@ -240,25 +228,15 @@ class Mailbox(object):
             Zero or more pygmail.message.Message objects, representing any
             messages that matched a provided uid
         """
-        def _on_fetch((response, cb_arg, error)):
-
-            # If we're asking for a message by UID that no longer exists
-            # (it was deleted out from under us, coding error, whatever)
-            # we just return None
-            if not response:
-                if __debug__:
-                    print error
-                loop_cb_args(callback, None)
-                return
-
-            typ, data = response
-            if typ != "OK" or not data:
-                loop_cb_args(callback, None)
-            else:
+        def _on_fetch(imap_response):
+            if not register_callback_if_error(imap_response, callback):
+                data = extract_data(imap_response)
                 messages = []
                 for msg_parts in parse_fetch_request(data):
                     flags, body = msg_parts
-                    messages.append(gm.Message(body, self, full_body=include_body, flags=flags))
+                    messages.append(GM.Message(body, self,
+                                               full_body=include_body,
+                                               flags=flags))
                 loop_cb_args(callback, messages)
 
         def _on_connection(connection):
@@ -288,20 +266,17 @@ class Mailbox(object):
 
         Returns:
             A pygmail.message.Message object representing the email message, or
-            None if none could be found
+            None if none could be found.  If an error is encountered, an
+            IMAPError object will be returned.
         """
 
-        def _on_fetch((response, cb_arg, error)):
-            typ, data = response
-            if typ != "OK" or not data:
-                if __debug__:
-                    print error
-                loop_cb_args(callback, None)
-            else:
+        def _on_fetch(imap_response):
+            if not register_callback_if_error(imap_response, callback):
+                data = extract_data(imap_response)
                 for msg_parts in parse_fetch_request(data):
                     flags, body = msg_parts
                     loop_cb_args(callback,
-                                 gm.Message(body, self,
+                                 GM.Message(body, self,
                                             full_body=include_body,
                                             flags=flags))
 
@@ -333,31 +308,34 @@ class Mailbox(object):
                          GmailMessage object
 
         Returns:
-            A list of zero or more message objects (or uids)
-
+            A list of zero or more message objects (or uids) if success, and
+            an error object in all other situations
         """
         # If we were told to fetch no messages, fast "callback" and don't
         # bother doing any network io
         if len(ids) == 0:
             loop_cb_args(callback, [])
         else:
-            def _on_fetch((response, cb_arg, error)):
-                typ, data = response
-                if only_uids:
-                    loop_cb_args(callback, [string.split(elm, " ")[4][:-1] for elm in data])
-                else:
-                    messages = []
-                    for msg_parts in parse_fetch_request(data):
-                        flags, body = msg_parts
-                        messages.append(gm.Message(body, self, flags=flags))
-                    loop_cb_args(callback, messages)
+            def _on_fetch(imap_response):
+                if not register_callback_if_error(imap_response, callback):
+                    data = extract_data(imap_response)
+                    if only_uids:
+                        uids = [string.split(elm, " ")[4][:-1] for elm in data]
+                        loop_cb_args(callback, uids)
+                    else:
+                        messages = []
+                        for msg_parts in parse_fetch_request(data):
+                            flags, body = msg_parts
+                            messages.append(GM.Message(body, self, flags=flags))
+                        loop_cb_args(callback, messages)
 
             def _on_connection(connection):
                 if only_uids:
                     request = '(X-GM-MSGID UID)'
                 else:
                     request = '(X-GM-MSGID UID FLAGS X-GM-LABELS BODY.PEEK[HEADER.FIELDS (FROM CC TO SUBJECT DATE MESSAGE-ID)])'
-                connection.fetch(",".join(ids), request, callback=add_loop_cb(_on_fetch))
+                connection.fetch(",".join(ids), request,
+                                 callback=add_loop_cb(_on_fetch))
 
             def _on_select(result):
                 self.account.connection(callback=add_loop_cb(_on_connection))

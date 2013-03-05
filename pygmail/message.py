@@ -7,7 +7,8 @@ from quopri import encodestring
 from email.parser import HeaderParser
 from email.Iterators import typed_subpart_iterator
 from pygmail.address import Address
-from utilities import loop_cb_args, add_loop_cb, add_loop_cb_args, loop_cb
+from utilities import loop_cb_args, add_loop_cb, add_loop_cb_args, extract_data
+from pygmail.errors import is_encoding_error, check_for_response_error
 
 
 def message_part_charset(part, message):
@@ -107,10 +108,6 @@ def utf8_encode_message_part(message_part, message, default="ascii"):
 
         message_part._normalized = normalized
         return normalized
-
-
-def is_encoding_error(msg):
-    return msg.__class__ is UnicodeDecodeError or msg.__class__ is LookupError
 
 
 class Message(object):
@@ -233,7 +230,8 @@ class Message(object):
 
             for part in typed_subpart_iterator(self.raw, 'text', 'plain'):
                 section_encoding = message_part_charset(part, self.raw) or self.charset
-                section_text = utf8_encode_message_part(part, self.raw, section_encoding)
+                section_text = utf8_encode_message_part(part, self.raw,
+                                                        section_encoding)
                 if is_encoding_error(section_text):
                     self.encoding_error = section_text
                 else:
@@ -241,7 +239,8 @@ class Message(object):
 
             for part in typed_subpart_iterator(self.raw, 'text', 'html'):
                 section_encoding = message_part_charset(part, self.raw) or self.charset
-                section_text = utf8_encode_message_part(part, self.raw, section_encoding)
+                section_text = utf8_encode_message_part(part, self.raw,
+                                                        section_encoding)
                 if is_encoding_error(section_text):
                     self.encoding_error = section_text
                 else:
@@ -261,11 +260,9 @@ class Message(object):
             error occurs fetching the body of the messages, None is returned
 
         """
-        def _on_fetch((response, cb_arg, error)):
-            typ, data = response
-            if typ != "OK":
-                loop_cb_args(callback, None)
-            else:
+        def _on_fetch(imap_response):
+            if not self._callback_if_error(imap_response, callback):
+                data = extract_data(imap_response)
                 self.raw = email.message_from_string(data[0][1])
                 self.charset = self.raw.get_content_charset()
                 loop_cb_args(callback, self.raw)
@@ -274,7 +271,7 @@ class Message(object):
             connection.uid("FETCH", self.uid, "(RFC822)",
                            callback=add_loop_cb(_on_fetch))
 
-        def _on_select(result):
+        def _on_select(is_mailbox_changed):
             self.conn(callback=add_loop_cb(_on_connection))
 
         # First check to see if we've already pulled down the body of this
@@ -375,7 +372,6 @@ class Message(object):
 
         Returns:
             A tuple object representation of when the message was sent
-
         """
         if self.sent_datetime is None:
             self.sent_datetime = email.utils.parsedate(self.date)
@@ -385,57 +381,62 @@ class Message(object):
         """Deletes the message from the IMAP server
 
         Returns:
-            A reference to the current object
-
+            True on success, and in all other instances an error object
         """
+        def _on_original_mailbox_reselected(imap_response):
+            if not self._callback_if_error(imap_response, callback):
+                loop_cb_args(callback, True)
+
         def _on_recevieved_connection_6(connection):
             connection.select(self.mailbox.name,
-                              callback=add_loop_cb(callback))
+                              callback=add_loop_cb(_on_original_mailbox_reselected))
 
-        def _on_expunge_complete((response, cb_arg, error)):
-            self.conn(callback=add_loop_cb(_on_recevieved_connection_6))
+        def _on_expunge_complete(imap_response):
+            if not self._callback_if_error(imap_response, callback):
+                self.conn(callback=add_loop_cb(_on_recevieved_connection_6))
 
         def _on_recevieved_connection_5(connection):
             connection.expunge(callback=add_loop_cb(_on_expunge_complete))
 
-        def _on_delete_complete((response, cb_arg, error)):
-            self.conn(callback=add_loop_cb(_on_recevieved_connection_5))
+        def _on_delete_complete(imap_response):
+            if not self._callback_if_error(imap_response, callback):
+                self.conn(callback=add_loop_cb(_on_recevieved_connection_5))
 
         def _on_received_connection_4(connection, deleted_uid):
             connection.uid('STORE', deleted_uid, '+FLAGS',
                            '\\Deleted',
                            callback=add_loop_cb(_on_delete_complete))
 
-        def _on_search_for_message_complete(rs):
-            response, cb_arg, error = rs
-            typ, data = response
-            if typ != "OK" or not data:
-                callback(None)
-                print response
-            deleted_uid = data[0].split()[-1]
-            callback_params = dict(deleted_uid=deleted_uid)
-            self.conn(callback=add_loop_cb_args(_on_received_connection_4, callback_params))
+        def _on_search_for_message_complete(imap_response):
+            if not self._callback_if_error(imap_response, callback):
+                data = extract_data(imap_response)
+                deleted_uid = data[0].split()[-1]
+                callback_params = dict(deleted_uid=deleted_uid)
+                self.conn(callback=add_loop_cb_args(_on_received_connection_4,
+                                                    callback_params))
 
         def _on_received_connection_3(connection):
             connection.uid('SEARCH',
                            '(HEADER Message-ID "' + self.message_id + '")',
                            callback=add_loop_cb(_on_search_for_message_complete))
 
-        def _on_trash_selected((response, cb_arg, error)):
-            self.conn(callback=add_loop_cb(_on_received_connection_3))
+        def _on_trash_selected(imap_response):
+            if not self._callback_if_error(imap_response, callback):
+                self.conn(callback=add_loop_cb(_on_received_connection_3))
 
         def _on_received_connection_2(connection):
             connection.select("[Gmail]/Trash",
                               callback=add_loop_cb(_on_trash_selected))
 
-        def _on_message_moved((response, cb_arg, error)):
-            self.conn(callback=add_loop_cb(_on_received_connection_2))
+        def _on_message_moved(imap_response):
+            if not self._callback_if_error(imap_response, callback):
+                self.conn(callback=add_loop_cb(_on_received_connection_2))
 
         def _on_received_connection(connection):
             connection.uid('COPY', self.uid, "[Gmail]/Trash",
                            callback=add_loop_cb(_on_message_moved))
 
-        def _on_mailbox_select(msg_count):
+        def _on_mailbox_select(is_selected):
             self.conn(callback=add_loop_cb(_on_received_connection))
 
         self.mailbox.select(callback=add_loop_cb(_on_mailbox_select))
@@ -449,11 +450,11 @@ class Message(object):
         of the the current message object.
 
         Returns:
-            A reference to the current object
-
+            True on success, and in all other instances an error object
         """
-        def _on_post_labeling(rs):
-            loop_cb_args(callback, rs)
+        def _on_post_labeling(imap_response):
+            if not self._callback_if_error(imap_response, callback):
+                loop_cb_args(callback, True)
 
         def _on_post_search_select(connection):
             labels_value = '(%s)' % ' '.join(self.labels) if self.labels else "()"
@@ -461,18 +462,20 @@ class Message(object):
                            "+X-GM-LABELS", labels_value,
                            callback=add_loop_cb(_on_post_labeling))
 
-        def _on_message_id_search((response, cb_arg, error)):
-            typ, data = response
-            self.uid = data[0].split()[-1]
-            self.conn(callback=add_loop_cb(_on_post_search_select))
+        def _on_message_id_search(imap_response):
+            if not self._callback_if_error(imap_response, callback):
+                data = extract_data(imap_response)
+                self.uid = data[0].split()[-1]
+                self.conn(callback=add_loop_cb(_on_post_search_select))
 
         def _on_post_append_select(connection):
             connection.uid('SEARCH',
                            '(HEADER Message-ID "' + self.message_id + '")',
                            callback=add_loop_cb(_on_message_id_search))
 
-        def _on_append((response, cb_arg, error)):
-            self.conn(callback=add_loop_cb(_on_post_append_select))
+        def _on_append(imap_response):
+            if not self._callback_if_error(imap_response, callback):
+                self.conn(callback=add_loop_cb(_on_post_append_select))
 
         def _on_received_connection(connection, raw_string):
             connection.append(
@@ -483,12 +486,12 @@ class Message(object):
                 callback=add_loop_cb(_on_append)
             )
 
-        def _on_select(msg_count, raw_string):
+        def _on_select(is_selected, raw_string):
             callback_params = dict(raw_string=raw_string)
             self.conn(callback=add_loop_cb_args(_on_received_connection,
                                                 callback_params))
 
-        def _on_delete(rs, raw_string):
+        def _on_delete(was_deleted, raw_string):
             callback_params = dict(raw_string=raw_string)
             self.mailbox.select(callback=add_loop_cb_args(_on_select,
                                                           callback_params))
@@ -514,8 +517,7 @@ class Message(object):
                        or a tuple of terms to replace the corresponding strings
                        in the find tuple
         Returns:
-            A reference to the current message object
-
+            True on success, and in all other instances an error object
         """
         def _on_fetch_raw_body(raw):
             valid_content_types = ('plain', 'html')
@@ -530,22 +532,28 @@ class Message(object):
                     # then default to quoted printable.  Otherwise the module
                     # will default to base64, which can cause problems
                     if not section_encoding:
-                        part.add_header('Content-Transfer-Encoding', "quoted-printable")
+                        part.add_header('Content-Transfer-Encoding',
+                                        'quoted-printable')
                         section_encoding = "quoted-printable"
 
                     section_charset = message_part_charset(part, self.raw)
-                    new_payload_section = utf8_encode_message_part(part, self.raw, section_charset)
+                    new_payload_section = utf8_encode_message_part(
+                        part, self.raw, section_charset)
 
                     if isinstance(find, tuple) or isinstance(find, list):
                         for i in range(0, len(find)):
-                            new_payload_section = new_payload_section.replace(find[i], replace[i])
+                            new_payload_section = new_payload_section.replace(
+                                find[i], replace[i])
                     else:
-                        new_payload_section = new_payload_section.replace(find, replace)
+                        new_payload_section = new_payload_section.replace(
+                            find, replace)
 
-                    new_payload_section = new_payload_section.encode(part._orig_charset, errors="replace")
+                    new_payload_section = new_payload_section.encode(
+                        part._orig_charset, errors="replace")
 
                     if section_encoding == "quoted-printable":
-                        new_payload_section = encodestring(new_payload_section, quotetabs=0)
+                        new_payload_section = encodestring(new_payload_section,
+                                                           quotetabs=0)
                         part.set_payload(new_payload_section, part._orig_charset)
                     elif section_encoding == "base64":
                         part.set_payload(new_payload_section, part._orig_charset)
@@ -560,3 +568,28 @@ class Message(object):
             self.save(callback=callback)
 
         self.fetch_raw_body(callback=add_loop_cb(_on_fetch_raw_body))
+
+    def _callback_if_error(self, imap_response, callback):
+        """Checks to see if the given response, from a raw imaplib2 call,
+        is an error.  If so, it registers the given callback on the tornado
+        IO Loop
+
+        Args:
+            imap_response -- The 3 part tuple (response, cb_arg, error) that
+                             imaplib2 returns as a result of any callback
+                             response
+            callback      -- The callback function expecting a valid response
+                             from the IMAP server
+
+
+        Returns:
+            True if the given imap_response was an error and a callback has
+            be registered to handle.  Otherwise False.
+        """
+        error = check_for_response_error(imap_response)
+        if error:
+            error.context = self
+            loop_cb_args(callback, error)
+            return True
+        else:
+            return False

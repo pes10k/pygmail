@@ -1,10 +1,7 @@
 import imaplib2
 import mailbox
-from utilities import loop_cb_args, add_loop_cb
-
-
-def is_auth_error(response):
-    return response.__class__ is AuthError
+from pygmail.utilities import loop_cb_args, add_loop_cb, extract_data
+from pygmail.errors import register_callback_if_error, is_auth_error, AuthError
 
 
 class Account(object):
@@ -77,13 +74,14 @@ class Account(object):
         if self.boxes is not None:
             loop_cb_args(callback, self.boxes)
         else:
-            def _on_mailboxes((response, cb_arg, error)):
-                typ, data = response
-                self.boxes = []
-                for box in data:
-                    if include_meta or "[" not in box:
-                        self.boxes.append(mailbox.Mailbox(self, box))
-                loop_cb_args(callback, self.boxes)
+            def _on_mailboxes(imap_response):
+                if not register_callback_if_error(imap_response, callback):
+                    data = extract_data(imap_response)
+                    self.boxes = []
+                    for box in data:
+                        if include_meta or "[" not in box:
+                            self.boxes.append(mailbox.Mailbox(self, box))
+                    loop_cb_args(callback, self.boxes)
 
             def _on_connection(connection):
                 if is_auth_error(connection):
@@ -177,12 +175,3 @@ class Account(object):
             self.conn.close()
         self.conn.logout()
         self.connected = False
-
-
-class AuthError(object):
-    """An exeption like class signifying that an authentication attempt with the
-    gmail server was not accepted. This is handled through a class instead of
-    through exceptions to make things easier with the event loop."""
-
-    def __init__(self, desc):
-        self.msg = desc

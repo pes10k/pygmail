@@ -1,7 +1,22 @@
-"""Functions for interacting with the toranado IO loop"""
+"""Functions for interacting with the toranado IO loop and parsing responses
+from the imaplib2 library"""
 
 import tornado
 from datetime import timedelta
+
+
+def extract_data(imap_response):
+    """Returns the data section the tuple returned from an imaplib2 request.
+    This function assumes that the given tuple is in the correct format
+    return from an imaplib2 call: ((typ, data), cb_arg, error)
+
+    Args:
+        imap_response -- The tuple returned from an imaplib2 request
+
+    Returns:
+        The data portion of the imaplib2 request
+    """
+    return imap_response[0][1]
 
 
 def io_loop():
