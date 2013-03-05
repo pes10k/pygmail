@@ -44,8 +44,8 @@ def check_for_response_error(imap_response):
     response, cb_arg, error = imap_response
     if response is None or response[0] != "OK":
         if __debug__:
-            print error
-        return IMAPError(error)
+            print error[1]
+        return IMAPError(error[1])
     else:
         return None
 
