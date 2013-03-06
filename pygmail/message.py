@@ -211,6 +211,9 @@ class Message(object):
                 self.uid == other.uid and
                 self.mailbox.name == other.mailbox.name)
 
+    def __str__(self):
+        return "<Message %s: Subject: '%s'>" % (self.uid, self.subject)
+
     @property
     def from_address(self):
         if not hasattr(self, '_from_address'):
