@@ -459,26 +459,17 @@ class Message(object):
             if not self._callback_if_error(imap_response, callback):
                 loop_cb_args(callback, True)
 
-        def _on_post_search_select(connection):
+        def _on_post_append_connection(connection):
             labels_value = '(%s)' % ' '.join(self.labels) if self.labels else "()"
             connection.uid("STORE", self.uid,
                            "+X-GM-LABELS", labels_value,
                            callback=add_loop_cb(_on_post_labeling))
 
-        def _on_message_id_search(imap_response):
-            if not self._callback_if_error(imap_response, callback):
-                data = extract_data(imap_response)
-                self.uid = data[0].split()[-1]
-                self.conn(callback=add_loop_cb(_on_post_search_select))
-
-        def _on_post_append_select(connection):
-            connection.uid('SEARCH',
-                           '(HEADER Message-ID "' + self.message_id + '")',
-                           callback=add_loop_cb(_on_message_id_search))
-
         def _on_append(imap_response):
             if not self._callback_if_error(imap_response, callback):
-                self.conn(callback=add_loop_cb(_on_post_append_select))
+                data = extract_data(imap_response)
+                self.uid = data[0].split()[2][:-1]
+                self.conn(callback=add_loop_cb(_on_post_append_connection))
 
         def _on_received_connection(connection, raw_string):
             connection.append(
