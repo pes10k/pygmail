@@ -2,7 +2,7 @@ import re
 import string
 import message as GM
 from pygmail.utilities import loop_cb_args, add_loop_cb, extract_data
-from pygmail.errors import register_callback_if_error
+from pygmail.errors import register_callback_if_error, is_auth_error
 
 
 def parse_fetch_request(response, size=2):
@@ -87,7 +87,7 @@ class Mailbox(object):
         self.name = Mailbox.NAME_PATTERN.match(full_name).groups()[2]
 
     def __str__(self):
-        return self.name
+        return "<Mailbox: %s>" % (self.name,)
 
     def count(self, callback=None):
         """Returns a count of the number of emails in the mailbox
@@ -106,6 +106,29 @@ class Mailbox(object):
         def _on_connection(connection):
             connection.select(mailbox=self.name,
                               callback=add_loop_cb(_on_select_complete))
+
+        self.account.connection(callback=add_loop_cb(_on_connection))
+
+    def delete(self, callback=None):
+        """Removes the mailbox / folder from the current gmail account. In
+        Gmail's implementation, this translates into deleting a Gmail label.
+
+        Return:
+            True if a folder / label was removed. Otherwise, False (such
+            as if the current folder / label doesn't exist at deletion)
+        """
+        def _on_mailbox_deletion(imap_response):
+            if not register_callback_if_error(imap_response, callback):
+                data = extract_data(imap_response)
+                was_success = data[0] == "Success"
+                loop_cb_args(callback, was_success)
+
+        def _on_connection(connection):
+            if is_auth_error(connection):
+                loop_cb_args(callback, connection)
+            else:
+                connection.delete(self.name,
+                                  callback=add_loop_cb(_on_mailbox_deletion))
 
         self.account.connection(callback=add_loop_cb(_on_connection))
 

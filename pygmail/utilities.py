@@ -19,6 +19,19 @@ def extract_data(imap_response):
     return imap_response[0][1]
 
 
+def extract_type(imap_response):
+    """Returns the IMAP response type from a imaplib2 raw imap response. This
+    should be "NO", "OK", "BAD", "PREAUTH", or "BYE"
+
+    Args:
+        imap_response -- The tuple returned from an imaplib2 request
+
+    Returns:
+        The type portion of the imaplib2 request
+    """
+    return imap_response[0][0]
+
+
 def io_loop():
     """Returns a reference to the tornado IO Loop
 

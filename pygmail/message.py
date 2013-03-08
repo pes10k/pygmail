@@ -460,7 +460,7 @@ class Message(object):
                 loop_cb_args(callback, True)
 
         def _on_post_append_connection(connection):
-            labels_value = '(%s)' % ' '.join(self.labels) if self.labels else "()"
+            labels_value = '(%s)' % (' '.join(self.labels),) if self.labels else "()"
             connection.uid("STORE", self.uid,
                            "+X-GM-LABELS", labels_value,
                            callback=add_loop_cb(_on_post_labeling))
@@ -587,3 +587,6 @@ class Message(object):
             return True
         else:
             return False
+
+    def _safe_save_copy(self):
+        """Create a text version of the message"""

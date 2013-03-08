@@ -1,7 +1,7 @@
 import imaplib2
 import mailbox
-from pygmail.utilities import loop_cb_args, add_loop_cb, extract_data
-from pygmail.errors import register_callback_if_error, is_auth_error, AuthError
+from pygmail.utilities import loop_cb_args, add_loop_cb, extract_data, extract_type
+from pygmail.errors import register_callback_if_error, is_auth_error, AuthError, check_for_response_error
 
 
 class Account(object):
@@ -56,6 +56,41 @@ class Account(object):
         if hasattr(self, 'conn') and hasattr(self, 'connected'):
             self.conn.logout()
 
+    def add_mailbox(self, name, callback=None):
+        """Creates a new mailbox / folder in the current account. This is
+        implemented using the gmail X-GM-LABELS IMAP extension.
+
+        Args:
+            name -- the name of the folder to create in the gmail account.
+
+        Return:
+            True if a new folder / label was created. Otherwise, False (such
+            as if the folder already exists)
+        """
+
+        def _on_mailbox_creation(imap_response):
+            error = check_for_response_error(imap_response)
+            if error:
+                loop_cb_args(callback, error)
+            else:
+                response_type = extract_type(imap_response)
+                if response_type == "NO":
+                    loop_cb_args(callback, False)
+                else:
+                    data = extract_data(imap_response)
+                    self.boxes = None
+                    was_success = data[0] == "Success"
+                    loop_cb_args(callback, was_success)
+
+        def _on_connection(connection):
+            if is_auth_error(connection):
+                loop_cb_args(callback, connection)
+            else:
+                connection.create(name,
+                                  callback=add_loop_cb(_on_mailbox_creation))
+
+        self.connection(callback=add_loop_cb(_on_connection))
+
     def mailboxes(self, callback=None, include_meta=False):
         """Returns a list of all mailboxes in the current account
 
@@ -87,9 +122,9 @@ class Account(object):
                 if is_auth_error(connection):
                     loop_cb_args(callback, connection)
                 else:
-                    connection.list(callback=lambda rs: loop_cb_args(_on_mailboxes, rs))
+                    connection.list(callback=add_loop_cb(_on_mailboxes))
 
-            self.connection(callback=lambda conn: loop_cb_args(_on_connection, conn))
+            self.connection(callback=add_loop_cb(_on_connection))
 
     def get(self, mailbox_name, callback=None, include_meta=False):
         """Returns the mailbox with a given name in the current account
@@ -158,7 +193,7 @@ class Account(object):
                 self.conn.authenticate(
                     "XOAUTH2",
                     lambda x: xoauth2_string,
-                    callback=lambda rs: loop_cb_args(_on_authentication, rs)
+                    callback=add_loop_cb(_on_authentication)
                 )
             except:
                 loop_cb_args(callback, AuthError(""))
