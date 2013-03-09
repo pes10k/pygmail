@@ -175,20 +175,12 @@ class Message(object):
         headers = Message.HEADER_PARSER.parsestr(message[1])
         self.headers = headers
 
-        self.date = headers["Date"]
-        self.sender = headers["From"]
-        self.to = headers["To"]
-        self.cc = headers["Cc"] if "Cc" in headers else ()
-
-        if "Subject" not in headers:
-            self.subject = None
-        else:
-            raw_subject = headers["Subject"]
-            subject_parts = eh.decode_header(raw_subject)[0]
-            if subject_parts[1] is not None:
-                self.subject = unicode(subject_parts[0], subject_parts[1], errors='replace')
-            else:
-                self.subject = unicode(subject_parts[0], 'ascii', errors='replace')
+        self.date = self.get_header("Date")[0]
+        self.sender = self.get_header("From")[0]
+        self.to = self.get_header('To')[0]
+        self.subject = self.get_header('Subject')[0]
+        self.cc = self.get_header("Cc")
+        self.message_id = headers['Message-Id']
 
         self.message_id = headers['Message-Id']
 
@@ -213,6 +205,42 @@ class Message(object):
 
     def __str__(self):
         return "<Message %s: Subject: '%s'>" % (self.uid, self.subject)
+
+    def get_header(self, key):
+        """Returns a unicode version of the requested header value, properly
+        decoded
+
+        Args:
+            key -- the header value desired
+
+        Return:
+            A list or tuple of zero or more unicode values, describing the
+            value stored in the header field
+        """
+        try:
+            raw_headers = eh.decode_header(self.headers[key])
+            header_values = []
+            for value, encoding in raw_headers:
+                header_encoding = encoding or 'ascii'
+                unicode_header = unicode(value, header_encoding,
+                                         errors='replace')
+                header_values.append(unicode_header)
+            return header_values
+        except KeyError:
+            return ()
+
+    def set_header(self, key, value, current_encoding='ascii'):
+        """Sets a header, stored as utf-8 unicode
+
+        Args:
+            key   -- the header value desired
+            value -- the value to encode and set in the current message
+
+        Keyword Args:
+            current_encoding -- The current encoding of the given value
+        """
+        unicode_value = unicode(value, current_encoding, errors='replace')
+        self.headers[key] = eh.Header(unicode_value, 'utf-8')
 
     @property
     def from_address(self):
@@ -665,7 +693,7 @@ class Message(object):
             # First seralize the state we'll loose when we write this copy
             # of the message to a safe, second location
 
-            for header_to_copy in ('In-Reply-To', 'References'):
+            for header_to_copy in ('In-Reply-To', 'References', 'Sender'):
                 try:
                     header_value = copied_message[header_to_copy]
                     del copied_message[header_to_copy]
@@ -675,9 +703,7 @@ class Message(object):
 
             serialized_data = dict(message_id=self.message_id, flags=self.flags,
                                    labels=self.labels, headers=stripped_headers,
-                                   subject=self.subject)
-
-
+                                   subject=copied_message['Subject'])
 
             serilization = pickle.dumps(serialized_data)
             custom_header = "X-%s-Data" % (header_label,)
@@ -688,6 +714,8 @@ class Message(object):
             # and to be formatted correctly.
             new_message_id = "<%s@pygmail>" % (uuid4().hex,)
             copied_message.replace_header("Message-Id", new_message_id)
+            new_subject = " ** %s - Backup ** " % (copied_message['Subject'],)
+            copied_message.replace_header('Subject', new_subject)
             loop_cb_args(callback, copied_message)
 
         self.fetch_raw_body(callback=add_loop_cb(_on_fetch_raw_body))
