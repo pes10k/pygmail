@@ -1,7 +1,7 @@
 import re
 import string
 import message as GM
-from pygmail.utilities import loop_cb_args, add_loop_cb, extract_data
+from pygmail.utilities import loop_cb_args, add_loop_cb, extract_data, add_loop_cb_args
 from pygmail.errors import register_callback_if_error, is_auth_error
 
 
@@ -83,6 +83,7 @@ class Mailbox(object):
 
         """
         self.account = account
+        self.conn = account.connection
         self.full_name = full_name
         self.name = Mailbox.NAME_PATTERN.match(full_name).groups()[2]
 
@@ -101,13 +102,93 @@ class Mailbox(object):
             if not register_callback_if_error(imap_response, callback):
                 data = extract_data(imap_response)
                 self.account.last_viewed_mailbox = self
-                loop_cb_args(callback, Mailbox.COUNT_PATTERN.sub("", str(data)))
+                loop_cb_args(callback,
+                             int(Mailbox.COUNT_PATTERN.sub("", str(data))))
 
         def _on_connection(connection):
             connection.select(mailbox=self.name,
                               callback=add_loop_cb(_on_select_complete))
 
         self.account.connection(callback=add_loop_cb(_on_connection))
+
+    def delete_message(self, uid, message_id, callback=None):
+        """Allows for deleting a message by UID, without needing to pulldown
+        and populate a Message object first.
+
+        Args:
+            uid        -- the uid for a message in the current mailbox
+            message_id -- the message id, from the email headers of the message
+                          to delete
+
+        Returns:
+            A boolean description of whether a message was successfully deleted
+        """
+        def _on_original_mailbox_reselected(imap_response):
+            if not register_callback_if_error(imap_response, callback):
+                loop_cb_args(callback, True)
+
+        def _on_recevieved_connection_7(connection):
+            connection.select(self.name,
+                              callback=add_loop_cb(_on_original_mailbox_reselected))
+
+        def _on_expunge_complete(imap_response):
+            if not register_callback_if_error(imap_response, callback):
+                self.conn(callback=add_loop_cb(_on_recevieved_connection_7))
+
+        def _on_recevieved_connection_6(connection):
+            connection.expunge(callback=add_loop_cb(_on_expunge_complete))
+
+        def _on_delete_complete(imap_response):
+            if not register_callback_if_error(imap_response, callback):
+                self.conn(callback=add_loop_cb(_on_recevieved_connection_6))
+
+        # def _on_recevieved_connection_5(connection):
+        #     connection.uid('STORE', uid, 'FLAGS',
+        #                    '\\Deleted',
+        #                    callback=add_loop_cb(_on_delete_complete))
+
+        # def _on_strip_labels(imap_response):
+        #     if not register_callback_if_error(imap_response, callback):
+        #         self.conn(callback=add_loop_cb(_on_recevieved_connection_5))
+
+        def _on_received_connection_4(connection, deleted_uid):
+            connection.uid('STORE', deleted_uid, 'FLAGS', '\\Deleted',
+                           callback=add_loop_cb(_on_delete_complete))
+
+        def _on_search_for_message_complete(imap_response):
+            if not register_callback_if_error(imap_response, callback):
+                data = extract_data(imap_response)
+                deleted_uid = data[0].split()[-1]
+                callback_params = dict(deleted_uid=deleted_uid)
+                self.conn(callback=add_loop_cb_args(_on_received_connection_4,
+                                                    callback_params))
+
+        def _on_received_connection_3(connection):
+            connection.uid('SEARCH',
+                           '(HEADER Message-ID "' + message_id + '")',
+                           callback=add_loop_cb(_on_search_for_message_complete))
+
+        def _on_trash_selected(imap_response):
+            if not register_callback_if_error(imap_response, callback):
+                self.conn(callback=add_loop_cb(_on_received_connection_3))
+
+        def _on_received_connection_2(connection):
+            connection.select("[Gmail]/Trash",
+                              callback=add_loop_cb(_on_trash_selected))
+
+        def _on_message_moved(imap_response):
+            if not register_callback_if_error(imap_response, callback):
+                self.conn(callback=add_loop_cb(_on_received_connection_2))
+
+        def _on_connection(connection):
+            connection.uid('COPY', uid, "[Gmail]/Trash",
+                           callback=add_loop_cb(_on_message_moved))
+
+        def _on_select(was_selected):
+            if not register_callback_if_error(was_selected, callback):
+                self.account.connection(callback=_on_connection)
+
+        self.select(callback=add_loop_cb(_on_select))
 
     def delete(self, callback=None):
         """Removes the mailbox / folder from the current gmail account. In
@@ -118,12 +199,16 @@ class Mailbox(object):
             as if the current folder / label doesn't exist at deletion)
         """
         def _on_mailbox_deletion(imap_response):
-            if not register_callback_if_error(imap_response, callback):
+            print "_on_mailbox_deletion"
+            print imap_response
+            if not register_callback_if_error(imap_response, callback, require_ok=False):
+                print "HERE"
                 data = extract_data(imap_response)
                 was_success = data[0] == "Success"
                 loop_cb_args(callback, was_success)
 
         def _on_connection(connection):
+            print "_on_connection"
             if is_auth_error(connection):
                 loop_cb_args(callback, connection)
             else:

@@ -6,7 +6,7 @@ callback based environment."""
 from pygmail.utilities import loop_cb_args
 
 
-def register_callback_if_error(imap_response, callback):
+def register_callback_if_error(imap_response, callback, require_ok=True):
     """Checks to see if the given imap response is an error.  If so,
     it is registered as the only argument to the given callback function
     on the Torando event loop.
@@ -17,25 +17,39 @@ def register_callback_if_error(imap_response, callback):
         callback      -- A callback function to register on the event loop
                          in case of an error
 
+    Keyword Args:
+        require_ok -- Whether responses other than "OK" from the IMAP server
+                      should trigger an error
+
     Returns:
         True if an error was encountered and the callback was queued. Otherwise
         False
     """
-    error = check_for_response_error(imap_response)
-    if error:
+    if isinstance(imap_response, tuple):
+        error = check_for_response_error(imap_response, require_ok=require_ok)
+        if error:
+            loop_cb_args(callback, error)
+            return True
+        else:
+            return False
+    elif is_imap_error(imap_response) or is_auth_error(imap_response):
         loop_cb_args(callback, error)
         return True
     else:
         return False
 
 
-def check_for_response_error(imap_response):
+def check_for_response_error(imap_response, require_ok=True):
     """Checks to see if the given response, from a raw imaplib2 call,
     is an error.
 
     Args:
         imap_response -- The 3 part tuple (response, cb_arg, error) that
                          imaplib2 returns as a result of any callback response
+
+    Keyword Args:
+        require_ok -- Whether responses other than "OK" from the IMAP server
+                      should trigger an error
 
     Returns:
         An IMAPError object encapsulating the error (in the case of an error),
@@ -48,7 +62,7 @@ def check_for_response_error(imap_response):
         return IMAPError(error[1])
     else:
         typ, data = response
-        if typ != "OK":
+        if typ != "OK" and require_ok:
             return IMAPError(desc=data, type=typ)
         else:
             return None

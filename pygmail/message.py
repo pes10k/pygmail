@@ -628,34 +628,40 @@ class Message(object):
                             the header of this message
 
         Returns:
-            The UID of the newly created message if a new message was
-            successfully created, and False in all other situations.
+            The tuple two identifiers of the newly created message, the uid and
+            the header's message-id if a new message was successfully created,
+            and False in all other situations.
         """
 
-        def _on_post_safe_labeling(imap_response, message_uid):
+        def _on_post_safe_labeling(imap_response, message_uid, message_id):
             if not self._callback_if_error(imap_response, callback):
-                loop_cb_args(callback, message_uid or False)
+                response = (message_uid, message_id) if message_uid else False
+                loop_cb_args(callback, response)
 
-        def _post_safe_save_connection(connection, message_uid):
-            callback_params = dict(message_uid=message_uid)
+        def _post_safe_save_connection(connection, message_uid, message_id):
+            callback_params = dict(message_uid=message_uid,
+                                   message_id=message_id)
             label_value = '(%s)' % (safe_label,)
             connection.uid("STORE", message_uid,
-                           "+X-GM-LABELS", label_value,
+                           "X-GM-LABELS", label_value,
                            callback=add_loop_cb_args(_on_post_safe_labeling,
                                                      callback_params))
 
-        def _on_safe_save_append(imap_response):
+        def _on_safe_save_append(imap_response, message_copy):
             if not self._callback_if_error(imap_response, callback):
                 data = extract_data(imap_response)
                 message_uid = data[0].split()[2][:-1]
-                callback_params = dict(message_uid=message_uid)
+                callback_params = dict(message_uid=message_uid,
+                                       message_id=message_copy['Message-Id'])
                 self.conn(callback=add_loop_cb_args(_post_safe_save_connection,
                                                     callback_params))
 
         def _on_safe_save_connection(connection, message_copy):
-            connection.append(self.mailbox.name, '(\Recent)', self.datetime(),
+            callback_params = dict(message_copy=message_copy)
+            connection.append(self.mailbox.name, '(\Seen)', self.datetime(),
                               message_copy.as_string(),
-                              callback=add_loop_cb(_on_safe_save_append))
+                              callback=add_loop_cb_args(_on_safe_save_append,
+                                                        callback_params))
 
         def _on_safe_save_message(message_copy):
             callback_params = dict(message_copy=message_copy)

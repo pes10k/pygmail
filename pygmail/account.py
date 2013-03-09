@@ -91,7 +91,7 @@ class Account(object):
 
         self.connection(callback=add_loop_cb(_on_connection))
 
-    def mailboxes(self, callback=None, include_meta=False):
+    def mailboxes(self, include_meta=False, callback=None):
         """Returns a list of all mailboxes in the current account
 
         Keyword Args:
@@ -197,6 +197,18 @@ class Account(object):
                 )
             except:
                 loop_cb_args(callback, AuthError(""))
+
+    def clear_mailbox_cache(self):
+        """Clears the local cache of mailboxes names / objects. This will
+        force the Account object to refetch the list of mailboxes
+        from the GMail IMAP server the next time a mailbox is fetched.
+
+        Returns:
+            The number of objects were cleared out of the cache
+        """
+        num_mailboxes = len(self.boxes)
+        self.boxes = None
+        return num_mailboxes
 
     def close(self):
         """Closes the IMAP connection to GMail
