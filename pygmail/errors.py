@@ -42,12 +42,16 @@ def check_for_response_error(imap_response):
         or None (in the case of no error).
     """
     response, cb_arg, error = imap_response
-    if response is None or (response[0] != "OK" and response[0] != "NO"):
+    if response is None:
         if __debug__:
             print error[1]
         return IMAPError(error[1])
     else:
-        return None
+        typ, data = response
+        if typ != "OK":
+            return IMAPError(desc=data, type=typ)
+        else:
+            return None
 
 
 class ExceptionLike(object):
@@ -62,6 +66,10 @@ class ExceptionLike(object):
 class IMAPError(ExceptionLike):
     """An exeption-like class signifying that an IMAP level error was received
     when attempting to communicate with Gmail's IMAP server."""
+
+    def __init__(self, desc=None, context=None, type=None):
+        self.type = type
+        super(IMAPError, self).__init__(desc=desc, context=context)
 
 
 def is_imap_error(response):

@@ -1,7 +1,7 @@
 import imaplib2
 import mailbox
 from pygmail.utilities import loop_cb_args, add_loop_cb, extract_data, extract_type
-from pygmail.errors import register_callback_if_error, is_auth_error, AuthError, check_for_response_error
+from pygmail.errors import register_callback_if_error, is_auth_error, AuthError, check_for_response_error, is_imap_error
 
 
 class Account(object):
@@ -147,7 +147,7 @@ class Account(object):
 
         """
         def _retreived_mailboxes(mailboxes):
-            if is_auth_error(mailboxes):
+            if is_auth_error(mailboxes) or is_imap_error(mailboxes):
                 loop_cb_args(callback, mailboxes)
             else:
                 for mailbox in mailboxes:

@@ -444,13 +444,25 @@ class Message(object):
 
         self.mailbox.select(callback=add_loop_cb(_on_mailbox_select))
 
-    def save(self, callback=None):
+    def save(self, safe_label=None, header_label="PyGmail", callback=None):
         """Copies changes to the current message to the server
 
         Since we can't write to or update a message directly in IMAP, this
         method simulates the same effect by deleting the current message, and
         then writing a new message into IMAP that matches the current state
         of the the current message object.
+
+        Keyword Args:
+            safe_label   -- If not None, a copy of this message will be saved into
+                            a label with the given name. This version is nearly
+                            identical to the current message, but has a unique
+                            message id and seralized state in the header. This
+                            copy serves as a transactional record. Once the
+                            message is successfully saved, this copy will be
+                            deleted.
+            header_label -- The label to use when writing serialized state into
+                            the header of this message. If safe_label is None,
+                            this argument will have no effect.
 
         Returns:
             True on success, and in all other instances an error object
@@ -492,6 +504,10 @@ class Message(object):
 
         def _on_as_string(raw_string):
             callback_params = dict(raw_string=raw_string)
+            # If we're not using the safe / transactional method of creating
+            # a copy before we delete the existing version, we can just skip
+            # ahead to the delete action. Otherwise, we need to first create
+            # a safe version of this message.
             self.delete(callback=add_loop_cb_args(_on_delete, callback_params))
 
         self.as_string(callback=add_loop_cb(_on_as_string))
@@ -510,6 +526,7 @@ class Message(object):
             replace -- the string to replace instances of the "find" term with,
                        or a tuple of terms to replace the corresponding strings
                        in the find tuple
+
         Returns:
             True on success, and in all other instances an error object
         """
@@ -563,6 +580,118 @@ class Message(object):
 
         self.fetch_raw_body(callback=add_loop_cb(_on_fetch_raw_body))
 
+    def save_copy(self, safe_label, header_label="PyGmail", callback=None):
+        """Saves a semi-identical copy of the message in another label / mailbox
+        in the gmail account. The saved message is intented
+        to be different enough that it can safely live in the gmail account
+        alongside the current version of the message.
+
+        Args:
+            safe_label -- If not None, a copy of this message will be saved into
+                          a label with the given name. This version is nearly
+                          identical to the current message, but has a unique
+                          message id and seralized state in the header. This
+                          copy serves as a transactional record. Once the
+                          message is successfully saved, this copy will be
+                          deleted.
+
+        Keyword Args:
+            header_label -- The label to use when writing serialized state into
+                            the header of this message
+
+        Returns:
+            The UID of the newly created message if a new message was
+            successfully created, and False in all other situations.
+        """
+
+        def _on_post_safe_labeling(imap_response, message_uid):
+            if not self._callback_if_error(imap_response, callback):
+                loop_cb_args(callback, message_uid or False)
+
+        def _post_safe_save_connection(connection, message_uid):
+            callback_params = dict(message_uid=message_uid)
+            label_value = '(%s)' % (safe_label,)
+            connection.uid("STORE", message_uid,
+                           "+X-GM-LABELS", label_value,
+                           callback=add_loop_cb_args(_on_post_safe_labeling,
+                                                     callback_params))
+
+        def _on_safe_save_append(imap_response):
+            if not self._callback_if_error(imap_response, callback):
+                data = extract_data(imap_response)
+                message_uid = data[0].split()[2][:-1]
+                callback_params = dict(message_uid=message_uid)
+                self.conn(callback=add_loop_cb_args(_post_safe_save_connection,
+                                                    callback_params))
+
+        def _on_safe_save_connection(connection, message_copy):
+            connection.append(self.mailbox.name, '(\Recent)', self.datetime(),
+                              message_copy.as_string(),
+                              callback=add_loop_cb(_on_safe_save_append))
+
+        def _on_safe_save_message(message_copy):
+            callback_params = dict(message_copy=message_copy)
+            self.conn(callback=add_loop_cb_args(_on_safe_save_connection,
+                                                callback_params))
+
+        self.safe_save_message(callback=add_loop_cb(_on_safe_save_message))
+
+    def safe_save_message(self, header_label="PyGmail", callback=None):
+        """Create a text version of the message that is similar to, but not
+        identical to, the current message. The text version of this is intented
+        to be different enough that it can safely live in the gmail account
+        alongside the current version of the message.
+
+        Keyword Args:
+            header_label -- The label to use when writing serialized state into
+                            the header of this message
+
+        Returns:
+            A message object, which is a near copy of the current message,
+            but with a new message id and with the flags and labels serilized
+            into a header.
+        """
+        from base64 import b64encode
+        from uuid import uuid4
+        try:
+            import cPickle as pickle
+        except:
+            import pickle
+
+        def _on_fetch_raw_body(raw_message):
+            copied_message = email.message_from_string(self.raw.as_string())
+
+            stripped_headers = []
+            # First seralize the state we'll loose when we write this copy
+            # of the message to a safe, second location
+
+            for header_to_copy in ('In-Reply-To', 'References'):
+                try:
+                    header_value = copied_message[header_to_copy]
+                    del copied_message[header_to_copy]
+                    stripped_headers.append((header_to_copy, header_value))
+                except:
+                    ""
+
+            serialized_data = dict(message_id=self.message_id, flags=self.flags,
+                                   labels=self.labels, headers=stripped_headers,
+                                   subject=self.subject)
+
+
+
+            serilization = pickle.dumps(serialized_data)
+            custom_header = "X-%s-Data" % (header_label,)
+            copied_message[custom_header] = b64encode(serilization)
+
+            # Next generate a new unique ID we can use for identifying this
+            # message. The only requirement here is to be unique in the account
+            # and to be formatted correctly.
+            new_message_id = "<%s@pygmail>" % (uuid4().hex,)
+            copied_message.replace_header("Message-Id", new_message_id)
+            loop_cb_args(callback, copied_message)
+
+        self.fetch_raw_body(callback=add_loop_cb(_on_fetch_raw_body))
+
     def _callback_if_error(self, imap_response, callback):
         """Checks to see if the given response, from a raw imaplib2 call,
         is an error.  If so, it registers the given callback on the tornado
@@ -575,7 +704,6 @@ class Message(object):
             callback      -- The callback function expecting a valid response
                              from the IMAP server
 
-
         Returns:
             True if the given imap_response was an error and a callback has
             be registered to handle.  Otherwise False.
@@ -587,6 +715,3 @@ class Message(object):
             return True
         else:
             return False
-
-    def _safe_save_copy(self):
-        """Create a text version of the message"""
