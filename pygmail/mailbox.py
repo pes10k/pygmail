@@ -142,15 +142,6 @@ class Mailbox(object):
             if not register_callback_if_error(imap_response, callback):
                 self.conn(callback=add_loop_cb(_on_recevieved_connection_6))
 
-        # def _on_recevieved_connection_5(connection):
-        #     connection.uid('STORE', uid, 'FLAGS',
-        #                    '\\Deleted',
-        #                    callback=add_loop_cb(_on_delete_complete))
-
-        # def _on_strip_labels(imap_response):
-        #     if not register_callback_if_error(imap_response, callback):
-        #         self.conn(callback=add_loop_cb(_on_recevieved_connection_5))
-
         def _on_received_connection_4(connection, deleted_uid):
             connection.uid('STORE', deleted_uid, 'FLAGS', '\\Deleted',
                            callback=add_loop_cb(_on_delete_complete))
