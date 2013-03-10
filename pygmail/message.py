@@ -600,6 +600,8 @@ class Message(object):
                     elif section_encoding in ('7bit', '8bit'):
                         part.set_payload(new_payload_section, part._orig_charset)
                         ENC.encode_7or8bit(part)
+                    else:  # Will catch "binary" encoded text sections
+                        part.set_payload(new_payload_section, part._orig_charset)
 
                     del part._normalized
                     del part._orig_charset

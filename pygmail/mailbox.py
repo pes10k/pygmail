@@ -190,16 +190,12 @@ class Mailbox(object):
             as if the current folder / label doesn't exist at deletion)
         """
         def _on_mailbox_deletion(imap_response):
-            print "_on_mailbox_deletion"
-            print imap_response
             if not register_callback_if_error(imap_response, callback, require_ok=False):
-                print "HERE"
                 data = extract_data(imap_response)
                 was_success = data[0] == "Success"
                 loop_cb_args(callback, was_success)
 
         def _on_connection(connection):
-            print "_on_connection"
             if is_auth_error(connection):
                 loop_cb_args(callback, connection)
             else:
