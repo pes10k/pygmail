@@ -557,6 +557,14 @@ class Message(object):
             True on success, and in all other instances an error object
         """
         def _on_fetch_raw_body(raw):
+
+            def _set_content_transfer_encoding(part, encoding):
+                try:
+                    del part['Content-Transfer-Encoding']
+                except:
+                    ""
+                part.add_header('Content-Transfer-Encoding', encoding)
+
             valid_content_types = ('plain', 'html')
 
             for valid_type in valid_content_types:
@@ -569,8 +577,6 @@ class Message(object):
                     # then default to quoted printable.  Otherwise the module
                     # will default to base64, which can cause problems
                     if not section_encoding:
-                        part.add_header('Content-Transfer-Encoding',
-                                        'quoted-printable')
                         section_encoding = "quoted-printable"
 
                     section_charset = message_part_charset(part, self.raw)
@@ -592,14 +598,19 @@ class Message(object):
                         new_payload_section = encodestring(new_payload_section,
                                                            quotetabs=0)
                         part.set_payload(new_payload_section, part._orig_charset)
+                        _set_content_transfer_encoding(part, "quoted-printable")
                     elif section_encoding == "base64":
                         part.set_payload(new_payload_section, part._orig_charset)
                         ENC.encode_base64(part)
+                        _set_content_transfer_encoding(part, "base64")
                     elif section_encoding in ('7bit', '8bit'):
                         part.set_payload(new_payload_section, part._orig_charset)
                         ENC.encode_7or8bit(part)
-                    else:  # Will catch "binary" encoded text sections
+                        _set_content_transfer_encoding(part, section_encoding)
+                    elif section_encoding == "binary":
                         part.set_payload(new_payload_section, part._orig_charset)
+                        part['Content-Transfer-Encoding'] = 'binary'
+                        _set_content_transfer_encoding(part, 'binary')
 
                     del part._normalized
                     del part._orig_charset

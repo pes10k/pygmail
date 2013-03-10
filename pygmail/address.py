@@ -38,10 +38,10 @@ class Address(object):
         return self._address
 
     def parse_address(self):
-        if isinstance(self.raw_address, list) or isinstance(self.raw_address, tuple):
+        if (isinstance(self.raw_address, list) or isinstance(self.raw_address, tuple)) and len(self.raw_address) == 2:
             name_encoded, self._address = self.raw_address
         else:
-            name_encoded, self._address = parseaddr(self.raw_address)
+            name_encoded, self._address = parseaddr(self.raw_address[0])
         self._address = self._address.strip("<>")
         decoded_name, decoded_encoding = decode_header(name_encoded)[0]
         if not decoded_encoding:
