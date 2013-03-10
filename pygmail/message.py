@@ -176,8 +176,8 @@ class Message(object):
         self.headers = headers
 
         self.date = self.get_header("Date")[0]
-        self.sender = self.get_header("From")[0]
-        self.to = self.get_header('To')[0]
+        self.sender = self.get_header("From")
+        self.to = self.get_header('To')
         self.subject = self.get_header('Subject')[0]
         self.cc = self.get_header("Cc")
         self.message_id = headers['Message-Id']

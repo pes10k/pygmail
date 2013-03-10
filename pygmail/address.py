@@ -38,11 +38,13 @@ class Address(object):
         return self._address
 
     def parse_address(self):
-        name_encoded, self._address = parseaddr(self.raw_address)
+        if isinstance(self.raw_address, list) or isinstance(self.raw_address, tuple):
+            name_encoded, self._address = self.raw_address
+        else:
+            name_encoded, self._address = parseaddr(self.raw_address)
+        self._address = self._address.strip("<>")
         decoded_name, decoded_encoding = decode_header(name_encoded)[0]
         if not decoded_encoding:
             self._name = unicode(decoded_name, 'ascii', errors='replace')
-        elif decoded_encoding == "utf-8":
-            self._name = decoded_name
         else:
             self._name = unicode(decoded_name, decoded_encoding, errors='replace')
