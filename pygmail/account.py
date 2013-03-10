@@ -175,7 +175,8 @@ class Account(object):
             not accepted by the Gmail server
 
         """
-        def _on_authentication((response, cb_arg, error)):
+        def _on_authentication(imap_response):
+            response, cb_arg, error = imap_response
             if not response or response[0] != "OK":
                 error = "User / OAuth2 token (%s, %s) were not accepted" % (
                     self.email, self.oauth2_token)
@@ -210,15 +211,26 @@ class Account(object):
         self.boxes = None
         return num_mailboxes
 
-    def close(self):
+    def close(self, callback=None):
         """Closes the IMAP connection to GMail
 
         Closes and logs out of the IMAP connection to GMail.
 
         Returns:
-            Reference to the current object
+            True if a connection was closed, and False if this close request
+            was a NOOP
         """
+        def _on_logout(imap_response):
+            if not register_callback_if_error(imap_response, callback, require_ok=False):
+                typ = extract_type(imap_response)
+                self.connected = False
+                loop_cb_args(callback, typ == "BYE")
+
+        def _on_close(imap_response):
+            if not register_callback_if_error(imap_response, callback):
+                self.conn.logout(callback=add_loop_cb(_on_logout))
+
         if self.last_viewed_mailbox:
-            self.conn.close()
-        self.conn.logout()
-        self.connected = False
+            self.conn.close(callback=add_loop_cb(_on_close))
+        else:
+            _on_close(None)
