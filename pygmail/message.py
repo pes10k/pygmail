@@ -182,8 +182,6 @@ class Message(object):
         self.cc = self.get_header("Cc")
         self.message_id = headers['Message-Id']
 
-        self.message_id = headers['Message-Id']
-
         if full_body:
             self.raw = email.message_from_string(message[1])
             self.charset = self.raw.get_content_charset()
@@ -204,7 +202,7 @@ class Message(object):
                 self.mailbox.name == other.mailbox.name)
 
     def __str__(self):
-        return "<Message %s: Subject: '%s'>" % (self.uid, self.subject)
+        return "<Message %s: X-GM-MSGID: '%s'>" % (self.uid, self.gmail_id)
 
     def get_header(self, key):
         """Returns a unicode version of the requested header value, properly
