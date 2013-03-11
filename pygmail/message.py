@@ -202,7 +202,7 @@ class Message(object):
                 self.mailbox.name == other.mailbox.name)
 
     def __str__(self):
-        return "<Message %s: X-GM-MSGID: '%s'>" % (self.uid, self.gmail_id)
+        return "<Message %s: Message-ID: '%s'>" % (self.uid, self.message_id)
 
     def get_header(self, key):
         """Returns a unicode version of the requested header value, properly
