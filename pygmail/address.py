@@ -43,8 +43,13 @@ class Address(object):
         else:
             name_encoded, self._address = parseaddr(self.raw_address[0])
         self._address = self._address.strip("<>")
-        decoded_name, decoded_encoding = decode_header(name_encoded)[0]
-        if not decoded_encoding:
-            self._name = unicode(decoded_name, 'ascii', errors='replace')
-        else:
-            self._name = unicode(decoded_name, decoded_encoding, errors='replace')
+        try:
+            decoded_name, decoded_encoding = decode_header(name_encoded)[0]
+            if not decoded_encoding:
+                self._name = unicode(decoded_name, 'ascii', errors='replace')
+            else:
+                self._name = unicode(decoded_name, decoded_encoding,
+                                     errors='replace')
+        except Exception as e:
+            self._name = u''
+            self.encoding_error = e

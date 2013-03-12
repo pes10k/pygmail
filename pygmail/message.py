@@ -227,7 +227,7 @@ class Message(object):
                 return ()
             else:
                 return header_values
-        except KeyError:
+        except Exception:
             return ()
 
     def set_header(self, key, value, current_encoding='ascii'):
