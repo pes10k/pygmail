@@ -1,7 +1,7 @@
 import imaplib2
 import mailbox
 from pygmail.utilities import loop_cb_args, add_loop_cb, extract_data, extract_type
-from pygmail.errors import register_callback_if_error, is_auth_error, AuthError, check_for_response_error, is_imap_error
+from pygmail.errors import register_callback_if_error, is_auth_error, AuthError, check_for_response_error, is_imap_error, IMAPError
 
 
 class Account(object):
@@ -231,6 +231,9 @@ class Account(object):
                 self.conn.logout(callback=add_loop_cb(_on_logout))
 
         if self.last_viewed_mailbox:
-            self.conn.close(callback=add_loop_cb(_on_close))
+            try:
+                self.conn.close(callback=add_loop_cb(_on_close))
+            except Exception as e:
+                loop_cb_args(callback, IMAPError(e))
         else:
             _on_close(None)
