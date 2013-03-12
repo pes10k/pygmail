@@ -223,7 +223,10 @@ class Message(object):
                 unicode_header = unicode(value, header_encoding,
                                          errors='replace')
                 header_values.append(unicode_header)
-            return header_values
+            if len(header_values) == 1 and header_values[0] == u'None':
+                return ()
+            else:
+                return header_values
         except KeyError:
             return ()
 
