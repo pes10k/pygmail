@@ -588,6 +588,11 @@ class Message(object):
                     new_payload_section = utf8_encode_message_part(
                         part, self.raw, section_charset)
 
+                    if is_encoding_error(new_payload_section):
+                        self.encoding_error = new_payload_section
+                        loop_cb_args(callback, self.encoding_error)
+                        return
+
                     if isinstance(find, tuple) or isinstance(find, list):
                         for i in range(0, len(find)):
                             new_payload_section = new_payload_section.replace(
