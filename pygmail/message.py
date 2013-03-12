@@ -578,6 +578,8 @@ class Message(object):
                     # will default to base64, which can cause problems
                     if not section_encoding:
                         section_encoding = "quoted-printable"
+                    else:
+                        section_encoding = section_encoding.lower()
 
                     section_charset = message_part_charset(part, self.raw)
                     new_payload_section = utf8_encode_message_part(
