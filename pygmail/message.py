@@ -175,11 +175,14 @@ class Message(object):
         headers = Message.HEADER_PARSER.parsestr(message[1])
         self.headers = headers
 
-        self.date = self.get_header("Date")[0]
+        for attr, single_header in (('date', 'Date'), ('subject', 'Subject')):
+            header_value = self.get_header(single_header)
+            setattr(self, attr, header_value[0] if header_value else '')
+
         self.sender = self.get_header("From")
         self.to = self.get_header('To')
-        self.subject = self.get_header('Subject')[0]
         self.cc = self.get_header("Cc")
+
         self.message_id = headers['Message-Id']
 
         if full_body:
