@@ -4,6 +4,9 @@ from pygmail.utilities import loop_cb_args, add_loop_cb, extract_data, extract_t
 from pygmail.errors import register_callback_if_error, is_auth_error, AuthError, check_for_response_error, is_imap_error, IMAPError
 
 
+__version__ = '0.1'
+
+
 class Account(object):
     """Represents a connection with a Google Mail account
 
@@ -21,26 +24,25 @@ class Account(object):
 
     HOST = "imap.googlemail.com"
 
-    def __init__(self, email, oauth2_token=None):
+    def __init__(self, email, oauth2_token=None, id_params=None):
         """Creates an Account instances
 
-        Keyword arguments:
-            xoauth_string  -- The xoauth connection string for connecting with
-                              the account using XOauth (default: None)
-            password       -- The password to use when establishing
-                              the connection when using the user/pass auth
-                              method (default: None)
-            oauth2_token   -- An OAuth2 access token for use when connecting
-                              with the given email address (default: None)
-
-        Arguments:
+        Args:
             email -- The email address of the account being connected to
 
+        Keyword args:
+            oauth2_token   -- An OAuth2 access token for use when connecting
+                              with the given email address (default: None)
+            id_params      -- A dict of keyword parameters used to id the current
+                              connection to google. If provided, each connection
+                              and authentication will be followed by an
+                              identificaiton
         """
         self.email = email
         self.conn = imaplib2.IMAP4_SSL(Account.HOST)
         self.oauth2_token = oauth2_token
         self.connected = False
+        self.id_params = id_params
 
         # A reference to the last selected / stated mailbox in the current
         # account.  This reference is kept so that we don't have to do
@@ -172,7 +174,8 @@ class Account(object):
 
         Returns:
             pygmail.account.AuthError, if the given connection parameters are
-            not accepted by the Gmail server
+            not accepted by the Gmail server, and otherwise an imaplib2
+            connection object.
 
         """
         def _on_authentication(imap_response):
@@ -183,7 +186,10 @@ class Account(object):
                 loop_cb_args(callback, AuthError(error))
             else:
                 self.connected = True
-                loop_cb_args(callback, self.conn)
+                if self.id_params:
+                    self.id(callback=callback)
+                else:
+                    loop_cb_args(callback, self.conn)
 
         if self.connected:
             loop_cb_args(callback, self.conn)
@@ -237,3 +243,27 @@ class Account(object):
                 loop_cb_args(callback, IMAPError(e))
         else:
             _on_close(None)
+
+    def id(self, callback=None):
+        """Sends the ID command to the Gmail server, as requested / suggested
+        by [Google](https://developers.google.com/google-apps/gmail/imap_extensions)
+
+        The order that the terms will be sent in undefined, but each key
+        will come immediatly before its value.
+
+        Args:
+            params -- A dictionary of terms that should be sent to google.
+
+        Returns:
+            The imaplib2 connection object on success, and an error object
+            otherwise
+        """
+        def _on_id(imap_response):
+            if not register_callback_if_error(imap_response, callback):
+                loop_cb_args(callback, self.conn)
+
+        def _on_connection(connection):
+            id_params = ((k, self.id_params[k]) for k in self.id_params)
+            connection.id(id_params, callback=add_loop_cb(_on_id))
+
+        self.connection(callback=add_loop_cb(_on_connection))
