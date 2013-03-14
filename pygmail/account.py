@@ -53,11 +53,6 @@ class Account(object):
         # the mailboxes in the current account.
         self.boxes = None
 
-    def __del__(self):
-        """Close the IMAP connection when the object is being destroyed"""
-        if hasattr(self, 'conn') and hasattr(self, 'connected'):
-            self.conn.logout()
-
     def add_mailbox(self, name, callback=None):
         """Creates a new mailbox / folder in the current account. This is
         implemented using the gmail X-GM-LABELS IMAP extension.
