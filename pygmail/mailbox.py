@@ -225,7 +225,8 @@ class Mailbox(object):
         else:
             self.count(callback=add_loop_cb(_on_count_complete))
 
-    def search(self, term, limit=100, offset=0, only_uids=False, callback=None):
+    def search(self, term, limit=100, offset=0, only_uids=False,
+               include_body=False, callback=None):
         """Searches for messages in the inbox that contain a given phrase
 
         Seaches for a given phrase in the current mailbox, and returns a list
@@ -240,11 +241,14 @@ class Mailbox(object):
             term -- the search term to search for in the current mailbox
 
         Keyword arguments:
-            limit     -- The maximum number of messages to return
-            offset    -- The first message to return out of the entire set of
-                         messages in the inbox
-            only_uids -- If True, only the UIDs of the matching messages will
-                         be returned, instead of full message headers.
+            limit        -- The maximum number of messages to return
+            offset       -- The first message to return out of the entire set of
+                            messages in the inbox
+            only_uids    -- If True, only the UIDs of the matching messages will
+                            be returned, instead of full message headers.
+            include_body -- Whether to fetch the entire message, instead of
+                            just the headers.  Note that if only_uids is True,
+                            this parameter will have no effect.
 
         Returns:
             A list of messages or uids (depending on the call arguments) in case
@@ -256,6 +260,7 @@ class Mailbox(object):
                 ids = string.split(data[0])
                 ids_to_fetch = page_from_list(ids, limit, offset)
                 self.messages_by_id(ids_to_fetch, only_uids=only_uids,
+                                    include_body=include_body,
                                     callback=add_loop_cb(callback))
 
         def _on_connection(connection):
@@ -390,18 +395,21 @@ class Mailbox(object):
 
         self.select(callback=add_loop_cb(_on_select))
 
-    def messages_by_id(self, ids, only_uids=False, callback=None):
+    def messages_by_id(self, ids, only_uids=False, include_body=False, callback=None):
         """Fetches messages in the mailbox by their id
 
         Returns a list of all messages in the current mailbox that match
         any of the provided ids.
 
         Args:
-            ids       -- A list of zero or more email ids, which should match
-                         messages in the current mailbox
-            only_uids -- If True, only the UIDs for the given volitile message
-                         ids will be returned, instead of the entire populated
-                         GmailMessage object
+            ids          -- A list of zero or more email ids, which should match
+                            messages in the current mailbox
+            only_uids    -- If True, only the UIDs for the given volitile
+                            message ids will be returned, instead of the entire
+                            populated GmailMessage object
+            include_body -- Whether to fetch the entire message, instead of
+                            just the headers.  Note that if only_uids is True,
+                            this parameter will have no effect.
 
         Returns:
             A list of zero or more message objects (or uids) if success, and
@@ -422,12 +430,16 @@ class Mailbox(object):
                         messages = []
                         for msg_parts in parse_fetch_request(data):
                             flags, body = msg_parts
-                            messages.append(GM.Message(body, self, flags=flags))
+                            messages.append(GM.Message(body, self,
+                                                       full_body=include_body,
+                                                       flags=flags))
                         loop_cb_args(callback, messages)
 
             def _on_connection(connection):
                 if only_uids:
                     request = '(X-GM-MSGID UID)'
+                elif include_body:
+                    request = '(X-GM-MSGID FLAGS X-GM-LABELS UID BODY.PEEK[])'
                 else:
                     request = '(X-GM-MSGID UID FLAGS X-GM-LABELS BODY.PEEK[HEADER.FIELDS (FROM CC TO SUBJECT DATE MESSAGE-ID)])'
                 connection.fetch(",".join(ids), request,

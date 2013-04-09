@@ -3,6 +3,8 @@ import re
 import email.utils
 import email.header as eh
 import email.encoders as ENC
+import time
+from datetime import datetime
 from quopri import encodestring
 from email.parser import HeaderParser
 from email.Iterators import typed_subpart_iterator
@@ -192,7 +194,6 @@ class Message(object):
             self.raw = None
 
         self.has_built_body_strings = None
-        self.sent_datetime = None
         self.encoding = None
         self.body_html = None
         self.body_plain = None
@@ -402,15 +403,28 @@ class Message(object):
     def datetime(self):
         """Returns the date of when the message was sent
 
-        Lazy-loads the date of when the message was sent (as a datetime object)
+        Lazy-loads the date of when the message was sent (as a tuple)
         based on the string date/time advertised in the email header
 
         Returns:
             A tuple object representation of when the message was sent
         """
-        if self.sent_datetime is None:
-            self.sent_datetime = email.utils.parsedate(self.date)
-        return self.sent_datetime
+        if not hasattr(self, '_datetime'):
+            self._datetime = email.utils.parsedate(self.date)
+        return self._datetime
+
+    def sent_datetime(self):
+        """Returns a datetime object of when the message was sent
+
+        Lazy-loads a datetime object representation of when the message
+        was sent
+
+        Returns:
+            A datetime object
+        """
+        if not hasattr(self, "_sent_datetime"):
+            self._sent_datetime = datetime.fromtimestamp(time.mktime(self.datetime()))
+        return self._sent_datetime
 
     def delete(self, callback=None):
         """Deletes the message from the IMAP server
