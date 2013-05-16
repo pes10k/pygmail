@@ -4,7 +4,7 @@ from pygmail.utilities import loop_cb_args, add_loop_cb, extract_data, extract_t
 from pygmail.errors import register_callback_if_error, is_auth_error, AuthError, check_for_response_error, is_imap_error, IMAPError
 
 
-__version__ = '0.1'
+__version__ = '0.2'
 
 
 class Account(object):
@@ -24,7 +24,7 @@ class Account(object):
 
     HOST = "imap.googlemail.com"
 
-    def __init__(self, email, oauth2_token=None, id_params=None):
+    def __init__(self, email, oauth2_token=None, id_params=None, imap_class=None):
         """Creates an Account instances
 
         Args:
@@ -37,9 +37,17 @@ class Account(object):
                               connection to google. If provided, each connection
                               and authentication will be followed by an
                               identificaiton
+            imap_class     -- Class responsible for handling IMAP traffic with
+                              Gmail.  Most of the time it'll make sense to leave
+                              this as None (which will use the default
+                              imaplib2.IMAP4_SSL class), but this option can
+                              be used to shim in other, API compatible classes.
         """
+        if not imap_class:
+            imap_class = imaplib2.IMAP4_SSL
+
         self.email = email
-        self.conn = imaplib2.IMAP4_SSL(Account.HOST)
+        self.conn = imap_class(Account.HOST)
         self.oauth2_token = oauth2_token
         self.connected = False
         self.id_params = id_params
