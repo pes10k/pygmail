@@ -266,7 +266,10 @@ class Account(object):
                 loop_cb_args(callback, self.conn)
 
         def _on_connection(connection):
-            id_params = ((k, self.id_params[k]) for k in self.id_params)
+            id_params = []
+            for k in self.id_params:
+                id_params.append(k)
+                id_params.append(self.id_params[k])
             connection.id(id_params, callback=add_loop_cb(_on_id))
 
         self.connection(callback=add_loop_cb(_on_connection))
