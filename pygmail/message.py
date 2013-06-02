@@ -7,7 +7,7 @@ import time
 from datetime import datetime
 from quopri import encodestring
 from email.parser import HeaderParser
-from email.Iterators import typed_subpart_iterator
+from email.Iterators import typed_subpart_iterator, body_line_iterator
 from pygmail.address import Address
 from utilities import loop_cb_args, add_loop_cb, add_loop_cb_args, extract_data
 from pygmail.errors import is_encoding_error, check_for_response_error
@@ -284,7 +284,7 @@ class Message(object):
 
             self.has_built_body_strings = True
 
-    def fetch_raw_body(self, callback=None):
+    def fetch_raw_body(self, callback):
         """Returns the body of the email
 
         Fetches the body / main part of this email message.  Note that this
@@ -375,7 +375,26 @@ class Message(object):
             else:
                 return self.body_plain or None
 
-    def as_string(self, callback=None):
+    def attachments(self, callback):
+        """Returns a list of attachment portions of the current message.
+
+        Returns:
+            A list of zero or more pygmail.message.Attachment objects
+        """
+        # First try returning a cached version of all the attachments
+        # associated with this message.  If one doesn't exist, we need to fetch
+        # and build the associated attribute objects
+        try:
+            loop_cb_args(callback, self._attachments)
+        except AttributeError:
+            def _on_raw_body(raw_body):
+                sub_parts = raw_body.body_line_iterator()
+                self._attachments = [Attachment(s) for s in sub_parts if "attachment" in s['Content-Disposition']]
+                loop_cb_args(callback, self._attachments)
+
+            self.fetch_raw_body(callback=_on_raw_body)
+
+    def as_string(self, callback):
         """Returns a representation of the message as a raw string
 
         Lazy loads the raw text version of the email message, if it hasn't
@@ -787,3 +806,47 @@ class Message(object):
             return True
         else:
             return False
+
+
+class Attachment(object):
+    """A class to represent the attachments to a given email message.  Instances
+    of this class are not intended to be instantiated directly, but managed from
+    instances of pygmail.message.Message objects."""
+
+    def __init__(self, msg):
+        self.raw = msg
+        self.type = msg.get_content_type()
+        self.name = msg.get_filename()
+
+    def sha1(self):
+        """Returns a hash of the base64 decoded version of the contents of this
+        message.  Since we're hashing w/o having to decode the attachment file,
+        this is slightly faster than hashing the result of Attachment.body
+
+        Return:
+            A SHA1 hash (as a hex byte string) of the base64 version of the
+            attachment
+        """
+        try:
+            return self._hash
+        except AttributeError:
+            from hashlib import sha1
+            h = sha1()
+            h.update(self.raw.get_payload())
+            self._hash = h.hexdigest()
+            return self._hash
+
+    def body(self):
+        """Returns a decoded, byte string version of the content of the
+        attachment, which usually results in just base64 decoding the contents
+        of the message.  This base64 decoded value is locally cached
+        so that subsequent requests are free
+
+        Return:
+            The byte string version of the attachment
+        """
+        try:
+            return self._body
+        except AttributeError:
+            self._body = self.raw.get_payload(decode=True)
+            return self._body
