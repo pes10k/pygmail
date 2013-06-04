@@ -124,7 +124,7 @@ class Account(object):
                     loop_cb_args(callback, self.boxes)
 
             def _on_connection(connection):
-                if is_auth_error(connection):
+                if is_auth_error(connection) or is_imap_error(connection):
                     loop_cb_args(callback, connection)
                 else:
                     connection.list(callback=add_loop_cb(_on_mailboxes))
@@ -267,9 +267,10 @@ class Account(object):
 
         def _on_connection(connection):
             id_params = []
-            for k in self.id_params:
-                id_params.append(k)
-                id_params.append(self.id_params[k])
-            connection.id(id_params, callback=add_loop_cb(_on_id))
+            for k, v in self.id_params.items():
+                id_params.append('"' + k + '"')
+                id_params.append('"' + v + '"')
+            id_string = "(" + " ".join(id_params) + ")"
+            connection.id(id_string, callback=add_loop_cb(_on_id))
 
         self.connection(callback=add_loop_cb(_on_connection))
