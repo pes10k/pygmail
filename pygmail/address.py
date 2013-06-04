@@ -19,12 +19,15 @@ class Address(object):
     def __hash__(self):
         return hash(self.__key())
 
-    def __str__(self):
+    def __unicode__(self):
         if self.name:
-            return "%s <%s>" % (self.name, self.address)
+            return u"%s <%s>" % (self.name, self.address)
         else:
             return self.address
 
+    def __str__(self):
+        return str(self.__unicode__())
+    
     @property
     def name(self):
         if not hasattr(self, '_name'):
