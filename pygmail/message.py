@@ -7,7 +7,7 @@ import time
 from datetime import datetime
 from quopri import encodestring
 from email.parser import HeaderParser
-from email.Iterators import typed_subpart_iterator, body_line_iterator
+from email.Iterators import typed_subpart_iterator
 from pygmail.address import Address
 from utilities import loop_cb_args, add_loop_cb, add_loop_cb_args, extract_data
 from pygmail.errors import is_encoding_error, check_for_response_error

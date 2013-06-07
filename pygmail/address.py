@@ -27,18 +27,22 @@ class Address(object):
 
     def __str__(self):
         return str(self.__unicode__())
-    
+
     @property
     def name(self):
-        if not hasattr(self, '_name'):
+        try:
+            return self._name
+        except AttributeError:
             self.parse_address()
-        return self._name
+            return self._name
 
     @property
     def address(self):
-        if not hasattr(self, '_address'):
+        try:
+            return self._address
+        except AttributeError:
             self.parse_address()
-        return self._address
+            return self._address
 
     def parse_address(self):
         if (isinstance(self.raw_address, list) or isinstance(self.raw_address, tuple)) and len(self.raw_address) == 2:
