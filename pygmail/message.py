@@ -387,9 +387,9 @@ class Message(object):
         try:
             loop_cb_args(callback, self._attachments)
         except AttributeError:
-            def _on_raw_body(raw_body):
-                sub_parts = raw_body.body_line_iterator()
-                self._attachments = [Attachment(s) for s in sub_parts if "attachment" in s['Content-Disposition']]
+            def _on_raw_body(raw):
+                is_attachment = lambda x: x['Content-Disposition'] and "attachment" in x['Content-Disposition']
+                self._attachments = [Attachment(s) for s in raw.walk() if is_attachment(s)]
                 loop_cb_args(callback, self._attachments)
 
             self.fetch_raw_body(callback=_on_raw_body)
