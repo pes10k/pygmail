@@ -141,7 +141,7 @@ class Message(object):
     # Single, class-wide reference to an email header parser
     HEADER_PARSER = HeaderParser()
 
-    def __init__(self, message, mailbox, full_body=False, flags=None):
+    def __init__(self, message, mailbox, full_body=False, teaser=False):
         """Initilizer for pgmail.message.Message objects
 
         Args:
@@ -153,15 +153,24 @@ class Message(object):
                         represents the mailbox this message exists in
 
         """
+        if teaser:
+            metadata_string = message[2]
+            body_string = message[1]
+            header_string = message[3]
+        else:
+            metadata_string = message[0]
+            body_string = message[1]
+            header_string = message[1]
+
         self.mailbox = mailbox
         self.account = mailbox.account
         self.conn = self.account.connection
-        metadata_rs = Message.METADATA_PATTERN.match(message[0])
+        metadata_rs = Message.METADATA_PATTERN.match(metadata_string)
 
         # If we're loading from a full RFC822 asked for message, the flags
         # come not in the header string, but at the end of the message
         if not metadata_rs:
-            metadata_short_rs = Message.METADATA_PATTERN_NOFLAGS.match(message[0])
+            metadata_short_rs = Message.METADATA_PATTERN_NOFLAGS.match(metadata_string)
             self.id, self.gmail_id, self.labels, self.uid = metadata_short_rs.groups()
         else:
             self.id, self.gmail_id, self.labels, self.uid, self.flags = metadata_rs.groups()
@@ -174,7 +183,7 @@ class Message(object):
         self.labels = [label.replace(r'\\\\', r'\\') for label in self.labels]
 
         ### First parse out the metadata about the email message
-        headers = Message.HEADER_PARSER.parsestr(message[1])
+        headers = Message.HEADER_PARSER.parsestr(header_string)
         self.headers = headers
 
         for attr, single_header in (('date', 'Date'), ('subject', 'Subject')):
@@ -188,7 +197,7 @@ class Message(object):
         self.message_id = headers['Message-Id']
 
         if full_body:
-            self.raw = email.message_from_string(message[1])
+            self.raw = email.message_from_string(body_string)
             self.charset = self.raw.get_content_charset()
         else:
             self.raw = None
