@@ -157,10 +157,14 @@ class Message(object):
             metadata_string = message[2]
             body_string = message[1]
             header_string = message[3]
-        else:
+        elif full_body:
             metadata_string = message[0]
             body_string = message[1]
             header_string = message[1]
+        else:
+            metadata_string = message[0]
+            header_string = message[1]
+            body_string = ""
 
         self.mailbox = mailbox
         self.account = mailbox.account

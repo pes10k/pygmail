@@ -40,10 +40,10 @@ def parse_fetch_request(response, teaser=False):
                     except IndexError:
                         rs = []
             else:
-                rs = chunk
+                rs = chunk[0]
             if rs:
                 yield rs
-            chunk = []
+            chunk[:] = []
 
 
 def page_from_list(a_list, limit, offset):
@@ -458,7 +458,7 @@ class Mailbox(object):
             include_body -- Whether to fetch the entire message, instead of
                             just the headers.  Note that if only_uids is True,
                             this parameter will have no effect.
-            teaser       -- Whether to fetch just a brief, teaser version of the
+            only_teasers -- Whether to fetch just a brief, teaser version of the
                             body (ie the first mime section).  Note that this
                             option is incompatible with the include_body
                             option, and the former will take precedence
@@ -467,7 +467,7 @@ class Mailbox(object):
             A list of zero or more message objects (or uids) if success, and
             an error object in all other situations
         """
-        only_teasers = "teaser" in kwargs
+        only_teasers = "only_teasers" in kwargs
 
         # If we were told to fetch no messages, fast "callback" and don't
         # bother doing any network io
