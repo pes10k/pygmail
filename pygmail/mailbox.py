@@ -249,7 +249,7 @@ class Mailbox(object):
             self.count(callback=add_loop_cb(_on_count_complete))
 
     def search(self, term, limit=100, offset=0, only_uids=False,
-               include_body=False, callback=None):
+               include_body=False, callback=None, **kwargs):
         """Searches for messages in the inbox that contain a given phrase
 
         Seaches for a given phrase in the current mailbox, and returns a list
@@ -272,11 +272,18 @@ class Mailbox(object):
             include_body -- Whether to fetch the entire message, instead of
                             just the headers.  Note that if only_uids is True,
                             this parameter will have no effect.
+            teaser       -- Whether to fetch just a brief, teaser version of the
+                            body (ie the first mime section).  Note that this
+                            option is incompatible with the include_body
+                            option, and the former will take precedence
+
 
         Returns:
             A list of messages or uids (depending on the call arguments) in case
             of success, and an IMAPError object in all other cases.
         """
+        only_teasers = "teaser" in kwargs
+
         def _on_search(imap_response):
             if not register_callback_if_error(imap_response, callback):
                 data = extract_data(imap_response)
@@ -284,7 +291,8 @@ class Mailbox(object):
                 ids_to_fetch = page_from_list(ids, limit, offset)
                 self.messages_by_id(ids_to_fetch, only_uids=only_uids,
                                     include_body=include_body,
-                                    callback=add_loop_cb(callback))
+                                    callback=add_loop_cb(callback),
+                                    teaser=only_teasers)
 
         def _on_connection(connection):
             rs, data = connection.search(None, 'X-GM-RAW', term,
