@@ -200,17 +200,20 @@ class Message(object):
 
         self.message_id = headers['Message-Id']
 
-        if full_body:
-            self.raw = email.message_from_string(body_string)
-            self.charset = self.raw.get_content_charset()
-        else:
-            self.raw = None
-
         self.has_built_body_strings = None
         self.encoding = None
         self.body_html = None
         self.body_plain = None
         self.encoding_error = None
+
+        if full_body:
+            self.raw = email.message_from_string(body_string)
+            self.charset = self.raw.get_content_charset()
+        elif teaser:
+            self.body_plain = body_string.decode('utf-8', errors='replace')
+            self.has_built_body_strings = True
+        else:
+            self.raw = None
 
     def __eq__(self, other):
         """ Overrides equality operator to check by uid and mailbox name """
@@ -274,6 +277,7 @@ class Message(object):
 
     def _build_body_strings(self):
         if not self.has_built_body_strings:
+
             self.body_plain = u''
             self.body_html = u''
 
