@@ -20,7 +20,8 @@ imap_queries = dict(
 )
 
 
-def parse_fetch_request(response, teaser=False):
+def parse_fetch_request(response, mailbox, teaser=False, full_body=False):
+    messages = []
     chunk = []
     for part in response:
         if part != ")":
@@ -29,21 +30,27 @@ def parse_fetch_request(response, teaser=False):
             if teaser:
                 if len(chunk) == 2:
                     headers, teaser = chunk
-                    rs = teaser[0], teaser[1], headers[0], headers[1]
+                    rs = dict(body=teaser[1], headers=headers[1],
+                              metadata=headers[0])
                 else:
                     # Some messages we encounter won't have any body section
                     # (such as if we reqested the teaser version but the
                     # message doesn't have a teaser).  In this case, just skip
                     # over the message and continue on
                     try:
-                        rs = '', '', chunk[0], chunk[1]
+                        rs = dict(body='', metadata=chunk[0], headers=chunk[1])
                     except IndexError:
-                        rs = []
+                        rs = None
             else:
-                rs = chunk[0]
+                rs = dict(body=chunk[0][1], headers=chunk[0][1],
+                          metadata=chunk[0][0])
             if rs:
-                yield rs
+                if teaser:
+                    messages.append(GM.MessageTeaser(mailbox, **rs))
+                else:
+                    messages.append(GM.Message(mailbox, full_body=full_body, **rs))
             chunk[:] = []
+    return messages
 
 
 def page_from_list(a_list, limit, offset):
@@ -373,11 +380,7 @@ class Mailbox(object):
         def _on_fetch(imap_response):
             if not register_callback_if_error(imap_response, callback):
                 data = extract_data(imap_response)
-                messages = []
-                for msg_parts in parse_fetch_request(data, teaser=only_teasers):
-                    messages.append(GM.Message(msg_parts, self,
-                                               full_body=include_body,
-                                               teaser=only_teasers))
+                messages = parse_fetch_request(data, self, only_teasers, include_body)
                 loop_cb_args(callback, messages)
 
         def _on_connection(connection):
@@ -427,10 +430,8 @@ class Mailbox(object):
         def _on_fetch(imap_response):
             if not register_callback_if_error(imap_response, callback):
                 data = extract_data(imap_response)
-                for msg_parts in parse_fetch_request(data, teaser=only_teasers):
-                    loop_cb_args(callback,
-                                 GM.Message(msg_parts, self, full_body=include_body,
-                                            teaser=only_teasers))
+                messages = parse_fetch_request(data, self, only_teasers, include_body)
+                loop_cb_args(callback, messages[0])
 
         def _on_connection(connection):
             if include_body:
@@ -488,11 +489,7 @@ class Mailbox(object):
                         uids = [string.split(elm, " ")[4][:-1] for elm in data]
                         loop_cb_args(callback, uids)
                     else:
-                        messages = []
-                        for msg_parts in parse_fetch_request(data, teaser=only_teasers):
-                            messages.append(GM.Message(msg_parts, self,
-                                                       full_body=include_body,
-                                                       teaser=only_teasers))
+                        messages = parse_fetch_request(data, self, only_teasers, include_body)
                         loop_cb_args(callback, messages)
 
             def _on_connection(connection):

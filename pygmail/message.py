@@ -4,13 +4,25 @@ import email.utils
 import email.header as eh
 import email.encoders as ENC
 import time
+from base64 import b64decode
 from datetime import datetime
-from quopri import encodestring
+from quopri import encodestring, decodestring
 from email.parser import HeaderParser
 from email.Iterators import typed_subpart_iterator
 from pygmail.address import Address
 from utilities import loop_cb_args, add_loop_cb, add_loop_cb_args, extract_data
 from pygmail.errors import is_encoding_error, check_for_response_error
+
+
+# A regular expression used for extracting metadata information out
+# of the raw IMAP returned string.
+METADATA_PATTERN = re.compile(r'(\d*) \(X-GM-MSGID (\d*) X-GM-LABELS \((.*)\) UID (\d*) FLAGS \((.*)\)\s')
+
+# A similar regular expression used for extracting metadata when the
+# message doesn't contain any flags
+METADATA_PATTERN_NOFLAGS = re.compile(r'(\d*) \(X-GM-MSGID (\d*) X-GM-LABELS \((.*)\) UID (\d*)\s')
+FIND_CHARSET = re.compile(r'charset="(.*?)"')
+HEADER_PARSER = HeaderParser()
 
 
 def message_part_charset(part, message):
@@ -112,70 +124,20 @@ def utf8_encode_message_part(message_part, message, default="ascii"):
         return normalized
 
 
-class Message(object):
-    """Message objects represent individual emails in a Gmail inbox.
-
-    Clients should not need to create instances of this class directly, but
-    should rely on instances of the pygmail.account.Account class (and the
-    related objects returned from the mailbox() methods) to load and provide
-    pygmail.message.Message instances as needed.
-
-    Instances have zero or more of the following properties:
-        id      -- an identifier of this email
-        uid     -- the unique identifier for this email in its mailbox
-        flags   -- a list of zero or more flags (ex \Seen)
-        date    -- the date (as a string) of when this message was sent
-        sender  -- the email account this email was sent from
-        subject -- the subject, if any, of the email
-
-    """
-
-    # A regular expression used for extracting metadata information out
-    # of the raw IMAP returned string.
-    METADATA_PATTERN = re.compile(r'(\d*) \(X-GM-MSGID (\d*) X-GM-LABELS \((.*)\) UID (\d*) FLAGS \((.*)\)\s')
-
-    # A similar regular expression used for extracting metadata when the
-    # message doesn't contain any flags
-    METADATA_PATTERN_NOFLAGS = re.compile(r'(\d*) \(X-GM-MSGID (\d*) X-GM-LABELS \((.*)\) UID (\d*)\s')
-
-    # Single, class-wide reference to an email header parser
-    HEADER_PARSER = HeaderParser()
-
-    def __init__(self, message, mailbox, full_body=False, teaser=False):
-        """Initilizer for pgmail.message.Message objects
-
-        Args:
-            message  -- The tupple describing basic information about the
-                        message.  The first index should contain metadata
-                        informattion (eg message's uid), and the second
-                        index contains header information (date, subject, etc.)
-            mailbox  -- Reference to a pygmail.mailbox.Mailbox object that
-                        represents the mailbox this message exists in
-
-        """
-        if teaser:
-            metadata_string = message[2]
-            body_string = message[1]
-            header_string = message[3]
-        elif full_body:
-            metadata_string = message[0]
-            body_string = message[1]
-            header_string = message[1]
-        else:
-            metadata_string = message[0]
-            header_string = message[1]
-            body_string = ""
-
+class MessageBase(object):
+    """A root class, containing some shared functionality between the full
+    and message teaser instances"""
+    def __init__(self, mailbox, metadata, headers):
         self.mailbox = mailbox
         self.account = mailbox.account
         self.conn = self.account.connection
-        metadata_rs = Message.METADATA_PATTERN.match(metadata_string)
+        metadata_rs = METADATA_PATTERN.match(metadata)
 
         # If we're loading from a full RFC822 asked for message, the flags
         # come not in the header string, but at the end of the message
         if not metadata_rs:
-            metadata_short_rs = Message.METADATA_PATTERN_NOFLAGS.match(metadata_string)
-            self.id, self.gmail_id, self.labels, self.uid = metadata_short_rs.groups()
+            meta_short_rs = METADATA_PATTERN_NOFLAGS.match(metadata)
+            self.id, self.gmail_id, self.labels, self.uid = meta_short_rs.groups()
         else:
             self.id, self.gmail_id, self.labels, self.uid, self.flags = metadata_rs.groups()
 
@@ -187,8 +149,7 @@ class Message(object):
         self.labels = [label.replace(r'\\\\', r'\\') for label in self.labels]
 
         ### First parse out the metadata about the email message
-        headers = Message.HEADER_PARSER.parsestr(header_string)
-        self.headers = headers
+        self.headers = HEADER_PARSER.parsestr(headers)
 
         for attr, single_header in (('date', 'Date'), ('subject', 'Subject')):
             header_value = self.get_header(single_header)
@@ -198,26 +159,11 @@ class Message(object):
         self.to = self.get_header('To')
         self.cc = self.get_header("Cc")
 
-        self.message_id = headers['Message-Id']
-
-        self.has_built_body_strings = None
-        self.encoding = None
-        self.body_html = None
-        self.body_plain = None
-        self.encoding_error = None
-
-        if full_body:
-            self.raw = email.message_from_string(body_string)
-            self.charset = self.raw.get_content_charset()
-        elif teaser:
-            self.body_plain = body_string.decode('utf-8', errors='replace')
-            self.has_built_body_strings = True
-        else:
-            self.raw = None
+        self.message_id = self.get_header('Message-Id')[0]
 
     def __eq__(self, other):
         """ Overrides equality operator to check by uid and mailbox name """
-        return (isinstance(other, Message) and
+        return (isinstance(other, MessageBase) and
                 self.uid == other.uid and
                 self.mailbox.name == other.mailbox.name)
 
@@ -250,6 +196,157 @@ class Message(object):
         except Exception:
             return ()
 
+    @property
+    def from_address(self):
+        if not hasattr(self, '_from_address'):
+            self._from_address = Address(self.sender)
+        return self._from_address
+
+    @property
+    def to_address(self):
+        if not hasattr(self, '_to_address'):
+            self._to_address = Address(self.to)
+        return self._to_address
+
+    def is_read(self):
+        """Checks to see if the message has been flaged as read
+
+        Returns:
+            True if the message is flagged as read, and otherwise False
+
+        """
+        return "\Seen" in self.flags
+
+    def datetime(self):
+        """Returns the date of when the message was sent
+
+        Lazy-loads the date of when the message was sent (as a tuple)
+        based on the string date/time advertised in the email header
+
+        Returns:
+            A tuple object representation of when the message was sent
+        """
+        if not hasattr(self, '_datetime'):
+            self._datetime = email.utils.parsedate(self.date)
+        return self._datetime
+
+    def sent_datetime(self):
+        """Returns a datetime object of when the message was sent
+
+        Lazy-loads a datetime object representation of when the message
+        was sent
+
+        Returns:
+            A datetime object
+        """
+        if not hasattr(self, "_sent_datetime"):
+            self._sent_datetime = datetime.fromtimestamp(time.mktime(self.datetime()))
+        return self._sent_datetime
+
+
+class MessageTeaser(MessageBase):
+    """A simplfied, abbreviated version of an email message that only contains
+    the first section of the email message.  This is intented to serve as
+    a smaller, preview of the the message that can save the time of bringing
+    down email attachments or other sections.
+
+    Since this is just a subset of the message, no write operations are
+    available.
+
+    Instances of this class aren't intended to be constructed directly, but
+    instead managed by the pygmail.mailbox.Message instances
+    """
+    def __init__(self, mailbox, metadata, headers, body):
+        """
+
+        Args:
+            mailbox  -- Reference to the pygmail.mailbox.Mailbox object
+                        representing the mailbox that this message was fetched
+                        from
+            metadata -- A string containing metadata about this teaser,
+                        such as the message uid, gmail id, labels, etc.
+            headers  -- The email headers of the message, including information
+                        such as encoding type, the to and from addresses, etc.
+            body     -- The body of the first section of the email message
+        """
+        super(MessageTeaser, self).__init__(mailbox, metadata, headers)
+
+        self.encoding = self.get_header('Content-Transfer-Encoding')
+
+        # If the message section doesn't advertise an encoding,
+        # then default to quoted printable.  Otherwise the module
+        # will default to base64, which can cause problems
+        if not self.encoding:
+            self.encoding = "quoted-printable"
+        else:
+            self.encoding = self.encoding.lower()
+
+        teaser_charset_header = self.get_header("Content-Type")
+        self.charset = 'utf-8'
+        if teaser_charset_header:
+            teaser_charset_match = FIND_CHARSET.search(teaser_charset_header)
+            if teaser_charset_match:
+                self.charset = teaser_charset_match.group(1)
+
+        if self.encoding == "quoted-printable":
+            body_decoded = decodestring(body)
+        elif self.encoding == "base64":
+            body_decoded = b64decode(body)
+        else:
+            body_decoded = body
+
+        self.body = unicode(body_decoded, self.charset, errors='replace')
+
+    def full_message(self, full_body=False, callback=False):
+        """Fetches the full version of the message that this message is a teaser
+        version of."""
+        self.mailbox.fetch(self.uid, include_body=full_body, callback=callback)
+
+
+class Message(MessageBase):
+    """Message objects represent individual emails in a Gmail inbox.
+
+    Clients should not need to create instances of this class directly, but
+    should rely on instances of the pygmail.account.Account class (and the
+    related objects returned from the mailbox() methods) to load and provide
+    pygmail.message.Message instances as needed.
+
+    Instances have zero or more of the following properties:
+        id      -- an identifier of this email
+        uid     -- the unique identifier for this email in its mailbox
+        flags   -- a list of zero or more flags (ex \Seen)
+        date    -- the date (as a string) of when this message was sent
+        sender  -- the email account this email was sent from
+        subject -- the subject, if any, of the email
+
+    """
+
+    def __init__(self, mailbox, metadata, headers, body, full_body=False):
+        """Initilizer for pygmai.message.Message objects
+
+        Args:
+            message  -- The tupple describing basic information about the
+                        message.  The first index should contain metadata
+                        informattion (eg message's uid), and the second
+                        index contains header information (date, subject, etc.)
+            mailbox  -- Reference to a pygmail.mailbox.Mailbox object that
+                        represents the mailbox this message exists in
+
+        """
+        super(Message, self).__init__(mailbox, metadata, headers)
+
+        self.has_built_body_strings = None
+        self.encoding = None
+        self.body_html = None
+        self.body_plain = None
+        self.encoding_error = None
+
+        if full_body:
+            self.raw = email.message_from_string(body)
+            self.charset = self.raw.get_content_charset()
+        else:
+            self.raw = None
+
     def set_header(self, key, value, current_encoding='ascii'):
         """Sets a header, stored as utf-8 unicode
 
@@ -262,18 +359,6 @@ class Message(object):
         """
         unicode_value = unicode(value, current_encoding, errors='replace')
         self.headers[key] = eh.Header(unicode_value, 'utf-8')
-
-    @property
-    def from_address(self):
-        if not hasattr(self, '_from_address'):
-            self._from_address = Address(self.sender)
-        return self._from_address
-
-    @property
-    def to_address(self):
-        if not hasattr(self, '_to_address'):
-            self._to_address = Address(self.to)
-        return self._to_address
 
     def _build_body_strings(self):
         if not self.has_built_body_strings:
@@ -426,41 +511,6 @@ class Message(object):
             loop_cb_args(callback, raw.as_string() if raw else None)
 
         self.fetch_raw_body(callback=add_loop_cb(_on_fetch_raw_body))
-
-    def is_read(self):
-        """Checks to see if the message has been flaged as read
-
-        Returns:
-            True if the message is flagged as read, and otherwise False
-
-        """
-        return "\Seen" in self.flags
-
-    def datetime(self):
-        """Returns the date of when the message was sent
-
-        Lazy-loads the date of when the message was sent (as a tuple)
-        based on the string date/time advertised in the email header
-
-        Returns:
-            A tuple object representation of when the message was sent
-        """
-        if not hasattr(self, '_datetime'):
-            self._datetime = email.utils.parsedate(self.date)
-        return self._datetime
-
-    def sent_datetime(self):
-        """Returns a datetime object of when the message was sent
-
-        Lazy-loads a datetime object representation of when the message
-        was sent
-
-        Returns:
-            A datetime object
-        """
-        if not hasattr(self, "_sent_datetime"):
-            self._sent_datetime = datetime.fromtimestamp(time.mktime(self.datetime()))
-        return self._sent_datetime
 
     def delete(self, callback=None):
         """Deletes the message from the IMAP server
