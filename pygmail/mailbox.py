@@ -475,7 +475,7 @@ class Mailbox(object):
             A list of zero or more message objects (or uids) if success, and
             an error object in all other situations
         """
-        only_teasers = "only_teasers" in kwargs
+        only_teasers = "teaser" in kwargs
 
         # If we were told to fetch no messages, fast "callback" and don't
         # bother doing any network io
