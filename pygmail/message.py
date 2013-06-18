@@ -10,7 +10,7 @@ from quopri import encodestring, decodestring
 from email.parser import HeaderParser
 from email.Iterators import typed_subpart_iterator
 from pygmail.address import Address
-from utilities import loop_cb_args, add_loop_cb, add_loop_cb_args, extract_data
+from utilities import loop_cb_args, add_loop_cb, add_loop_cb_args, extract_data, extract_first_bodystructure
 from pygmail.errors import is_encoding_error, check_for_response_error
 
 
@@ -21,8 +21,40 @@ METADATA_PATTERN = re.compile(r'(\d*) \(X-GM-MSGID (\d*) X-GM-LABELS \((.*)\) UI
 # A similar regular expression used for extracting metadata when the
 # message doesn't contain any flags
 METADATA_PATTERN_NOFLAGS = re.compile(r'(\d*) \(X-GM-MSGID (\d*) X-GM-LABELS \((.*)\) UID (\d*)\s')
-FIND_CHARSET = re.compile(r'charset="(.*?)"')
+BODY_STRUCTRUE = re.compile(r'BODYSTRUCTURE \((.*?)\) BODY\[HEADER\]')
+CHARSET_EXTRACTOR = re.compile(r'\("charset" "(.*?)"')
 HEADER_PARSER = HeaderParser()
+BOUNDARY_EXTRACTOR = re.compile(r'\("BOUNDARY" "(.*?)"\)', re.I)
+SECTION_HEADERS_ENDING = re.compile(r'\n\n|\r\r|\r\n\r\n', re.M)
+ENCODING_EXTRACTOR = re.compile(r'7bit|8bit|base64|quoted-printable')
+
+
+def extract_first_subsection(message, boundary):
+    """Extracts the first instance of an embeded, multipart email message,
+    described / bounded by the given boundry string.  None of this will make
+    any sense without a sickening understanding of RFC822
+
+    Args:
+        message  -- The partial body of an RFC822 email message as a string
+        boundary -- The bounds of a multipart email message
+
+    Returns:
+        The first subpart instance, if its availabe / can be found.  Otherwise,
+        returns the given message text unchanged
+    """
+    try:
+        full_boundary = "--" + boundary
+        boundary_length = len(full_boundary) + 1
+        first_instance = message.index(full_boundary)
+        next_instance = message.index(full_boundary, first_instance + boundary_length)
+        message_section = message[first_instance + boundary_length:next_instance + 1].strip()
+        header_matches = SECTION_HEADERS_ENDING.search(message_section)
+        if not header_matches:
+            return message
+        else:
+            return message_section[header_matches.start() + len(header_matches.group(0)):].strip()
+    except ValueError:
+        return message
 
 
 def message_part_charset(part, message):
@@ -271,27 +303,40 @@ class MessageTeaser(MessageBase):
         """
         super(MessageTeaser, self).__init__(mailbox, metadata, headers)
 
-        self.encoding = self.get_header('Content-Transfer-Encoding')
-
-        # If the message section doesn't advertise an encoding,
-        # then default to quoted printable.  Otherwise the module
-        # will default to base64, which can cause problems
-        if not self.encoding:
-            self.encoding = "quoted-printable"
-        else:
-            self.encoding = self.encoding.lower()
-
-        teaser_charset_header = self.get_header("Content-Type")
         self.charset = 'utf-8'
-        if teaser_charset_header:
-            teaser_charset_match = FIND_CHARSET.search(teaser_charset_header)
-            if teaser_charset_match:
-                self.charset = teaser_charset_match.group(1)
+        self.encoding = '8bit'
+        body_structure = None
+        first_structure = None
+        boundary = None
+
+        body_structure_match = BODY_STRUCTRUE.search(metadata)
+        if body_structure_match:
+            body_structure = body_structure_match.group(1)
+
+            boundary_matches = BOUNDARY_EXTRACTOR.search(body_structure)
+            if boundary_matches:
+                boundary = boundary_matches.group(1)
+            first_structure = extract_first_bodystructure(body_structure.lower())
+
+            charset_match = CHARSET_EXTRACTOR.search(first_structure)
+            if charset_match:
+                self.charset = charset_match.group(1)
+
+            encoding_match = ENCODING_EXTRACTOR.search(first_structure)
+            if not encoding_match:
+                encoding_match = ENCODING_EXTRACTOR.search(body_structure.lower())
+            self.encoding = encoding_match.group(0) if encoding_match else "8bit"
+
+        if boundary:
+            body = extract_first_subsection(body, boundary)
 
         if self.encoding == "quoted-printable":
             body_decoded = decodestring(body)
         elif self.encoding == "base64":
-            body_decoded = b64decode(body)
+            try:
+                body_decoded = b64decode(body)
+            except TypeError:
+                body_decoded = ""
         else:
             body_decoded = body
 

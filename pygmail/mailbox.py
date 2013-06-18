@@ -6,16 +6,16 @@ from pygmail.errors import register_callback_if_error, is_auth_error
 
 uid_fields = 'X-GM-MSGID UID'
 meta_fields = 'X-GM-MSGID X-GM-LABELS UID FLAGS'
-header_fields = 'BODY.PEEK[HEADER.FIELDS (FROM CC TO SUBJECT DATE MESSAGE-ID)]'
+header_fields = 'BODY.PEEK[HEADER]'
 body_fields = 'BODY.PEEK[]'
 teaser_fields = 'BODY.PEEK[1]'
 
 imap_queries = dict(
     uid='({uid})'.format(uid=uid_fields),
     body='({meta} {body})'.format(meta=meta_fields, body=body_fields),
-    teaser='({meta} {header} {teaser})'.format(meta=meta_fields,
-                                               header=header_fields,
-                                               teaser=teaser_fields),
+    teaser='({meta} BODYSTRUCTURE {header} {teaser})'.format(meta=meta_fields,
+                                                             header=header_fields,
+                                                             teaser=teaser_fields),
     header='({meta} {header})'.format(meta=meta_fields, header=header_fields)
 )
 
@@ -256,7 +256,7 @@ class Mailbox(object):
             self.count(callback=add_loop_cb(_on_count_complete))
 
     def search(self, term, limit=100, offset=0, only_uids=False,
-               include_body=False, callback=None, **kwargs):
+               full=False, callback=None, **kwargs):
         """Searches for messages in the inbox that contain a given phrase
 
         Seaches for a given phrase in the current mailbox, and returns a list
@@ -276,12 +276,12 @@ class Mailbox(object):
                             messages in the inbox
             only_uids    -- If True, only the UIDs of the matching messages will
                             be returned, instead of full message headers.
-            include_body -- Whether to fetch the entire message, instead of
+            full         -- Whether to fetch the entire message, instead of
                             just the headers.  Note that if only_uids is True,
                             this parameter will have no effect.
             teaser       -- Whether to fetch just a brief, teaser version of the
                             body (ie the first mime section).  Note that this
-                            option is incompatible with the include_body
+                            option is incompatible with the full
                             option, and the former will take precedence
 
 
@@ -297,7 +297,7 @@ class Mailbox(object):
                 ids = string.split(data[0])
                 ids_to_fetch = page_from_list(ids, limit, offset)
                 self.messages_by_id(ids_to_fetch, only_uids=only_uids,
-                                    include_body=include_body,
+                                    full=full,
                                     callback=add_loop_cb(callback),
                                     teaser=only_teasers)
 
@@ -353,7 +353,7 @@ class Mailbox(object):
 
         self.select(callback=add_loop_cb(_on_select_complete))
 
-    def fetch_all(self, uids, callback=None, include_body=False, **kwargs):
+    def fetch_all(self, uids, callback=None, full=False, **kwargs):
         """Returns a list of messages, each specified by their UID
 
         Returns zero or more GmailMessage objects, each representing a email
@@ -363,12 +363,12 @@ class Mailbox(object):
             uids -- A list of zero or more email uids
 
         Keyword Args:
-            include_body -- Whether to fetch the entire message, instead of
+            full -- Whether to fetch the entire message, instead of
                             just the headers.  Note that if only_uids is True,
                             this parameter will have no effect.
             teaser       -- Whether to fetch just a brief, teaser version of the
                             body (ie the first mime section).  Note that this
-                            option is incompatible with the include_body
+                            option is incompatible with the full
                             option, and the former will take precedence
 
         Returns:
@@ -380,11 +380,11 @@ class Mailbox(object):
         def _on_fetch(imap_response):
             if not register_callback_if_error(imap_response, callback):
                 data = extract_data(imap_response)
-                messages = parse_fetch_request(data, self, only_teasers, include_body)
+                messages = parse_fetch_request(data, self, only_teasers, full)
                 loop_cb_args(callback, messages)
 
         def _on_connection(connection):
-            if include_body and not only_teasers:
+            if full and not only_teasers:
                 request = imap_queries["body"]
             elif only_teasers:
                 request = imap_queries["teaser"]
@@ -402,7 +402,7 @@ class Mailbox(object):
         else:
             loop_cb_args(callback, None)
 
-    def fetch(self, uid, callback=None, include_body=False, **kwargs):
+    def fetch(self, uid, callback=None, full=False, **kwargs):
         """Returns a single message from the mailbox by UID
 
         Returns a single message object, representing the message in the current
@@ -412,12 +412,12 @@ class Mailbox(object):
             uid -- the numeric, unique identifier of the message in the mailbox
 
         Keyword Args:
-            include_body -- Whether to fetch the entire message, instead of
+            full -- Whether to fetch the entire message, instead of
                             just the headers.  Note that if only_uids is True,
                             this parameter will have no effect.
             teaser       -- Whether to fetch just a brief, teaser version of the
                             body (ie the first mime section).  Note that this
-                            option is incompatible with the include_body
+                            option is incompatible with the full
                             option, and the former will take precedence
 
         Returns:
@@ -430,11 +430,11 @@ class Mailbox(object):
         def _on_fetch(imap_response):
             if not register_callback_if_error(imap_response, callback):
                 data = extract_data(imap_response)
-                messages = parse_fetch_request(data, self, only_teasers, include_body)
+                messages = parse_fetch_request(data, self, only_teasers, full)
                 loop_cb_args(callback, messages[0])
 
         def _on_connection(connection):
-            if include_body:
+            if full:
                 request = imap_queries["body"]
             elif only_teasers:
                 request = imap_queries["teaser"]
@@ -449,7 +449,7 @@ class Mailbox(object):
 
         self.select(callback=add_loop_cb(_on_select))
 
-    def messages_by_id(self, ids, only_uids=False, include_body=False, callback=None, **kwargs):
+    def messages_by_id(self, ids, only_uids=False, full=False, callback=None, **kwargs):
         """Fetches messages in the mailbox by their id
 
         Returns a list of all messages in the current mailbox that match
@@ -463,12 +463,12 @@ class Mailbox(object):
             only_uids    -- If True, only the UIDs for the given volitile
                             message ids will be returned, instead of the entire
                             populated GmailMessage object
-            include_body -- Whether to fetch the entire message, instead of
+            full -- Whether to fetch the entire message, instead of
                             just the headers.  Note that if only_uids is True,
                             this parameter will have no effect.
             only_teasers -- Whether to fetch just a brief, teaser version of the
                             body (ie the first mime section).  Note that this
-                            option is incompatible with the include_body
+                            option is incompatible with the full
                             option, and the former will take precedence
 
         Returns:
@@ -489,13 +489,13 @@ class Mailbox(object):
                         uids = [string.split(elm, " ")[4][:-1] for elm in data]
                         loop_cb_args(callback, uids)
                     else:
-                        messages = parse_fetch_request(data, self, only_teasers, include_body)
+                        messages = parse_fetch_request(data, self, only_teasers, full)
                         loop_cb_args(callback, messages)
 
             def _on_connection(connection):
                 if only_uids:
                     request = imap_queries["uid"]
-                elif include_body:
+                elif full:
                     request = imap_queries["body"]
                 elif only_teasers:
                     request = imap_queries["teaser"]

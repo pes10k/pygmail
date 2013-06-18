@@ -5,6 +5,20 @@ import tornado
 from datetime import timedelta
 
 
+def extract_first_bodystructure(structure):
+    stack = 0
+    index = 0
+    for i in structure:
+        if i == "(":
+            stack += 1
+        elif i == ")":
+            stack -= 1
+        index += 1
+        if stack == 0:
+            return structure[:index]
+    return None
+
+
 def extract_data(imap_response):
     """Returns the data section the tuple returned from an imaplib2 request.
     This function assumes that the given tuple is in the correct format
