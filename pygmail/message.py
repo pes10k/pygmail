@@ -191,7 +191,11 @@ class MessageBase(object):
         self.to = self.get_header('To')
         self.cc = self.get_header("Cc")
 
-        self.message_id = self.get_header('Message-Id')[0]
+        message_ids = self.get_header('Message-Id')
+        if len(message_ids) == 0:
+            self.message_id = None
+        else:
+           self.message_id = message_ids[0]
 
     def __eq__(self, other):
         """ Overrides equality operator to check by uid and mailbox name """
