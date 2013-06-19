@@ -20,7 +20,7 @@ imap_queries = dict(
 )
 
 
-def parse_fetch_request(response, mailbox, teaser=False, full_body=False):
+def parse_fetch_request(response, mailbox, teaser=False, full=False):
     messages = []
     chunk = []
     for part in response:
@@ -32,6 +32,7 @@ def parse_fetch_request(response, mailbox, teaser=False, full_body=False):
                     headers, teaser = chunk
                     rs = dict(body=teaser[1], headers=headers[1],
                               metadata=headers[0])
+                    messages.append(GM.MessageTeaser(mailbox, **rs))
                 else:
                     # Some messages we encounter won't have any body section
                     # (such as if we reqested the teaser version but the
@@ -39,16 +40,17 @@ def parse_fetch_request(response, mailbox, teaser=False, full_body=False):
                     # over the message and continue on
                     try:
                         rs = dict(body='', metadata=chunk[0], headers=chunk[1])
+                        messages.append(GM.MessageTeaser(mailbox, **rs))
                     except IndexError:
-                        rs = None
-            else:
+                        pass
+            elif full:
                 rs = dict(body=chunk[0][1], headers=chunk[0][1],
                           metadata=chunk[0][0])
-            if rs:
-                if teaser:
-                    messages.append(GM.MessageTeaser(mailbox, **rs))
-                else:
-                    messages.append(GM.Message(mailbox, full_body=full_body, **rs))
+                messages.append(GM.Message(mailbox, **rs))
+            else:
+                rs = dict(headers=chunk[0][1], metadata=chunk[0][0])
+                messages.append(GM.MessageHeaders(mailbox, **rs))
+
             chunk[:] = []
     return messages
 
@@ -289,7 +291,7 @@ class Mailbox(object):
             A list of messages or uids (depending on the call arguments) in case
             of success, and an IMAPError object in all other cases.
         """
-        only_teasers = "teaser" in kwargs
+        only_teasers = kwargs.get("teaser")
 
         def _on_search(imap_response):
             if not register_callback_if_error(imap_response, callback):
@@ -375,7 +377,7 @@ class Mailbox(object):
             Zero or more pygmail.message.Message objects, representing any
             messages that matched a provided uid
         """
-        only_teasers = "teaser" in kwargs
+        only_teasers = kwargs.get("teaser")
 
         def _on_fetch(imap_response):
             if not register_callback_if_error(imap_response, callback):
@@ -384,13 +386,12 @@ class Mailbox(object):
                 loop_cb_args(callback, messages)
 
         def _on_connection(connection):
-            if full and not only_teasers:
+            if full:
                 request = imap_queries["body"]
             elif only_teasers:
                 request = imap_queries["teaser"]
             else:
                 request = imap_queries["header"]
-
             connection.uid("FETCH", ",".join(uids), request,
                            callback=add_loop_cb(_on_fetch))
 
@@ -425,7 +426,7 @@ class Mailbox(object):
             None if none could be found.  If an error is encountered, an
             IMAPError object will be returned.
         """
-        only_teasers = "teaser" in kwargs
+        only_teasers = kwargs.get("teaser")
 
         def _on_fetch(imap_response):
             if not register_callback_if_error(imap_response, callback):
@@ -475,7 +476,7 @@ class Mailbox(object):
             A list of zero or more message objects (or uids) if success, and
             an error object in all other situations
         """
-        only_teasers = "teaser" in kwargs
+        only_teasers = kwargs.get("teaser")
 
         # If we were told to fetch no messages, fast "callback" and don't
         # bother doing any network io

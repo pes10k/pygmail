@@ -195,7 +195,7 @@ class MessageBase(object):
         if len(message_ids) == 0:
             self.message_id = None
         else:
-           self.message_id = message_ids[0]
+            self.message_id = message_ids[0]
 
     def __eq__(self, other):
         """ Overrides equality operator to check by uid and mailbox name """
@@ -280,6 +280,23 @@ class MessageBase(object):
         return self._sent_datetime
 
 
+class MessageHeaders(MessageBase):
+    """A message response from Gmail that contains just the headers of an email
+    message (subject, to / from, etc).  This is what all mailbox level functions
+    return by default"""
+
+    def teaser(self, callback=False):
+        """Fetches an abbreviated, teaser version of the message, containing
+        just the text of the first text or html part of the message body
+        """
+        self.mailbox.fetch(self.uid, teaser=True, callback=callback)
+
+    def full_message(self, callback=False):
+        """Fetches the full version of the message that this message is a teaser
+        version of."""
+        self.mailbox.fetch(self.uid, full=True, callback=callback)
+
+
 class MessageTeaser(MessageBase):
     """A simplfied, abbreviated version of an email message that only contains
     the first section of the email message.  This is intented to serve as
@@ -346,10 +363,10 @@ class MessageTeaser(MessageBase):
 
         self.body = unicode(body_decoded, self.charset, errors='replace')
 
-    def full_message(self, full_body=False, callback=False):
+    def full_message(self, callback=False):
         """Fetches the full version of the message that this message is a teaser
         version of."""
-        self.mailbox.fetch(self.uid, include_body=full_body, callback=callback)
+        self.mailbox.fetch(self.uid, full=True, callback=callback)
 
 
 class Message(MessageBase):
@@ -370,7 +387,7 @@ class Message(MessageBase):
 
     """
 
-    def __init__(self, mailbox, metadata, headers, body, full_body=False):
+    def __init__(self, mailbox, metadata, headers, body):
         """Initilizer for pygmai.message.Message objects
 
         Args:
@@ -390,11 +407,8 @@ class Message(MessageBase):
         self.body_plain = None
         self.encoding_error = None
 
-        if full_body:
-            self.raw = email.message_from_string(body)
-            self.charset = self.raw.get_content_charset()
-        else:
-            self.raw = None
+        self.raw = email.message_from_string(body)
+        self.charset = self.raw.get_content_charset()
 
     def set_header(self, key, value, current_encoding='ascii'):
         """Sets a header, stored as utf-8 unicode
@@ -435,44 +449,7 @@ class Message(MessageBase):
 
             self.has_built_body_strings = True
 
-    def fetch_raw_body(self, callback):
-        """Returns the body of the email
-
-        Fetches the body / main part of this email message.  Note that this
-        doesn't currently fetch attachents (which are ignored)
-
-        Returns:
-            If there is both an HTML and plain text version of this message,
-            the HTML body is returned.  If neither is available, or an
-            error occurs fetching the body of the messages, None is returned
-
-        """
-        def _on_fetch(imap_response):
-            if not self._callback_if_error(imap_response, callback):
-                data = extract_data(imap_response)
-                self.raw = email.message_from_string(data[0][1])
-                self.charset = self.raw.get_content_charset()
-                loop_cb_args(callback, self.raw)
-
-        def _on_connection(connection):
-            connection.uid("FETCH", self.uid, "(RFC822)",
-                           callback=add_loop_cb(_on_fetch))
-
-        def _on_select(is_mailbox_changed):
-            self.conn(callback=add_loop_cb(_on_connection))
-
-        # First check to see if we've already pulled down the body of this
-        # message, in which case we can just return it w/o having to
-        # pull from the server again
-        if self.raw:
-            loop_cb_args(callback, self.raw)
-        else:
-            # Next, also check to see if we at least have a reference to the
-            # raw, underlying email message object, in which case we can save
-            # another network call to the IMAP server
-            self.mailbox.select(callback=add_loop_cb(_on_select))
-
-    def html_body(self, callback=None):
+    def html_body(self):
         """Returns the HTML version of the message body, if available
 
         Lazy loads the HTML body of the email message from the server and
@@ -483,23 +460,13 @@ class Message(MessageBase):
             body (or the body is only in plain text)
 
         """
-        if callback:
-            def _on_fetch_raw_body(full_body):
-                self._build_body_strings()
-                if self.encoding_error:
-                    loop_cb_args(callback, self.encoding_error)
-                else:
-                    loop_cb_args(callback, self.body_html or None)
-
-            self.fetch_raw_body(callback=add_loop_cb(_on_fetch_raw_body))
+        self._build_body_strings()
+        if self.encoding_error:
+            return self.encoding_error
         else:
-            self._build_body_strings()
-            if self.encoding_error:
-                return self.encoding_error
-            else:
-                return self.body_html or None
+            return self.body_html or None
 
-    def plain_body(self, callback=None):
+    def plain_body(self):
         """Returns the plain text version of the message body, if available
 
         Lazy loads the plain text version of the email body from the IMAP
@@ -510,21 +477,11 @@ class Message(MessageBase):
             has no body (or the body is only provided in HTML)
 
         """
-        if callback:
-            def _on_fetch_raw_body(full_body):
-                self._build_body_strings()
-                if self.encoding_error:
-                    loop_cb_args(callback, self.encoding_error)
-                else:
-                    loop_cb_args(callback, self.body_plain or None)
-
-            self.fetch_raw_body(callback=add_loop_cb(_on_fetch_raw_body))
+        self._build_body_strings()
+        if self.encoding_error:
+            return self.encoding_error
         else:
-            self._build_body_strings()
-            if self.encoding_error:
-                return self.encoding_error
-            else:
-                return self.body_plain or None
+            return self.body_plain or None
 
     def attachments(self, callback):
         """Returns a list of attachment portions of the current message.
@@ -535,17 +492,15 @@ class Message(MessageBase):
         # First try returning a cached version of all the attachments
         # associated with this message.  If one doesn't exist, we need to fetch
         # and build the associated attribute objects
+
         try:
             loop_cb_args(callback, self._attachments)
         except AttributeError:
-            def _on_raw_body(raw):
-                is_attachment = lambda x: x['Content-Disposition'] and "attachment" in x['Content-Disposition']
-                self._attachments = [Attachment(s) for s in raw.walk() if is_attachment(s)]
-                loop_cb_args(callback, self._attachments)
+            is_attachment = lambda x: x['Content-Disposition'] and "attachment" in x['Content-Disposition']
+            self._attachments = [Attachment(s) for s in self.raw.walk() if is_attachment(s)]
+            loop_cb_args(callback, self._attachments)
 
-            self.fetch_raw_body(callback=_on_raw_body)
-
-    def as_string(self, callback):
+    def as_string(self):
         """Returns a representation of the message as a raw string
 
         Lazy loads the raw text version of the email message, if it hasn't
@@ -556,10 +511,7 @@ class Message(MessageBase):
             an error fetching it
 
         """
-        def _on_fetch_raw_body(raw):
-            loop_cb_args(callback, raw.as_string() if raw else None)
-
-        self.fetch_raw_body(callback=add_loop_cb(_on_fetch_raw_body))
+        return self.raw.as_string()
 
     def delete(self, callback=None):
         """Deletes the message from the IMAP server
@@ -711,75 +663,71 @@ class Message(MessageBase):
         Returns:
             True on success, and in all other instances an error object
         """
-        def _on_fetch_raw_body(raw):
+        def _set_content_transfer_encoding(part, encoding):
+            try:
+                del part['Content-Transfer-Encoding']
+            except:
+                ""
+            part.add_header('Content-Transfer-Encoding', encoding)
 
-            def _set_content_transfer_encoding(part, encoding):
-                try:
-                    del part['Content-Transfer-Encoding']
-                except:
-                    ""
-                part.add_header('Content-Transfer-Encoding', encoding)
+        valid_content_types = ('plain', 'html')
 
-            valid_content_types = ('plain', 'html')
+        for valid_type in valid_content_types:
 
-            for valid_type in valid_content_types:
+            for part in typed_subpart_iterator(self.raw, 'text', valid_type):
 
-                for part in typed_subpart_iterator(self.raw, 'text', valid_type):
+                section_encoding = part['Content-Transfer-Encoding']
 
-                    section_encoding = part['Content-Transfer-Encoding']
+                # If the message section doesn't advertise an encoding,
+                # then default to quoted printable.  Otherwise the module
+                # will default to base64, which can cause problems
+                if not section_encoding:
+                    section_encoding = "quoted-printable"
+                else:
+                    section_encoding = section_encoding.lower()
 
-                    # If the message section doesn't advertise an encoding,
-                    # then default to quoted printable.  Otherwise the module
-                    # will default to base64, which can cause problems
-                    if not section_encoding:
-                        section_encoding = "quoted-printable"
-                    else:
-                        section_encoding = section_encoding.lower()
+                section_charset = message_part_charset(part, self.raw)
+                new_payload_section = utf8_encode_message_part(
+                    part, self.raw, section_charset)
 
-                    section_charset = message_part_charset(part, self.raw)
-                    new_payload_section = utf8_encode_message_part(
-                        part, self.raw, section_charset)
+                if is_encoding_error(new_payload_section):
+                    self.encoding_error = new_payload_section
+                    loop_cb_args(callback, self.encoding_error)
+                    return
 
-                    if is_encoding_error(new_payload_section):
-                        self.encoding_error = new_payload_section
-                        loop_cb_args(callback, self.encoding_error)
-                        return
-
-                    if isinstance(find, tuple) or isinstance(find, list):
-                        for i in range(0, len(find)):
-                            new_payload_section = new_payload_section.replace(
-                                find[i], replace[i])
-                    else:
+                if isinstance(find, tuple) or isinstance(find, list):
+                    for i in range(0, len(find)):
                         new_payload_section = new_payload_section.replace(
-                            find, replace)
+                            find[i], replace[i])
+                else:
+                    new_payload_section = new_payload_section.replace(
+                        find, replace)
 
-                    new_payload_section = new_payload_section.encode(
-                        part._orig_charset, errors="replace")
+                new_payload_section = new_payload_section.encode(
+                    part._orig_charset, errors="replace")
 
-                    if section_encoding == "quoted-printable":
-                        new_payload_section = encodestring(new_payload_section,
-                                                           quotetabs=0)
-                        part.set_payload(new_payload_section, part._orig_charset)
-                        _set_content_transfer_encoding(part, "quoted-printable")
-                    elif section_encoding == "base64":
-                        part.set_payload(new_payload_section, part._orig_charset)
-                        ENC.encode_base64(part)
-                        _set_content_transfer_encoding(part, "base64")
-                    elif section_encoding in ('7bit', '8bit'):
-                        part.set_payload(new_payload_section, part._orig_charset)
-                        ENC.encode_7or8bit(part)
-                        _set_content_transfer_encoding(part, section_encoding)
-                    elif section_encoding == "binary":
-                        part.set_payload(new_payload_section, part._orig_charset)
-                        part['Content-Transfer-Encoding'] = 'binary'
-                        _set_content_transfer_encoding(part, 'binary')
+                if section_encoding == "quoted-printable":
+                    new_payload_section = encodestring(new_payload_section,
+                                                       quotetabs=0)
+                    part.set_payload(new_payload_section, part._orig_charset)
+                    _set_content_transfer_encoding(part, "quoted-printable")
+                elif section_encoding == "base64":
+                    part.set_payload(new_payload_section, part._orig_charset)
+                    ENC.encode_base64(part)
+                    _set_content_transfer_encoding(part, "base64")
+                elif section_encoding in ('7bit', '8bit'):
+                    part.set_payload(new_payload_section, part._orig_charset)
+                    ENC.encode_7or8bit(part)
+                    _set_content_transfer_encoding(part, section_encoding)
+                elif section_encoding == "binary":
+                    part.set_payload(new_payload_section, part._orig_charset)
+                    part['Content-Transfer-Encoding'] = 'binary'
+                    _set_content_transfer_encoding(part, 'binary')
 
-                    del part._normalized
-                    del part._orig_charset
+                del part._normalized
+                del part._orig_charset
 
-            self.save(callback=callback)
-
-        self.fetch_raw_body(callback=add_loop_cb(_on_fetch_raw_body))
+        self.save(callback=callback)
 
     def save_copy(self, safe_label, header_label="PyGmail", callback=None):
         """Saves a semi-identical copy of the message in another label / mailbox
@@ -865,39 +813,36 @@ class Message(MessageBase):
         except:
             import pickle
 
-        def _on_fetch_raw_body(raw_message):
-            copied_message = email.message_from_string(self.raw.as_string())
+        copied_message = email.message_from_string(self.raw.as_string())
 
-            stripped_headers = []
-            # First seralize the state we'll loose when we write this copy
-            # of the message to a safe, second location
+        stripped_headers = []
+        # First seralize the state we'll loose when we write this copy
+        # of the message to a safe, second location
 
-            for header_to_copy in ('In-Reply-To', 'References', 'Sender'):
-                try:
-                    header_value = copied_message[header_to_copy]
-                    del copied_message[header_to_copy]
-                    stripped_headers.append((header_to_copy, header_value))
-                except:
-                    ""
+        for header_to_copy in ('In-Reply-To', 'References', 'Sender'):
+            try:
+                header_value = copied_message[header_to_copy]
+                del copied_message[header_to_copy]
+                stripped_headers.append((header_to_copy, header_value))
+            except:
+                ""
 
-            serialized_data = dict(message_id=self.message_id, flags=self.flags,
-                                   labels=self.labels, headers=stripped_headers,
-                                   subject=copied_message['Subject'])
+        serialized_data = dict(message_id=self.message_id, flags=self.flags,
+                               labels=self.labels, headers=stripped_headers,
+                               subject=copied_message['Subject'])
 
-            serilization = pickle.dumps(serialized_data)
-            custom_header = "X-%s-Data" % (header_label,)
-            copied_message[custom_header] = b64encode(serilization)
+        serilization = pickle.dumps(serialized_data)
+        custom_header = "X-%s-Data" % (header_label,)
+        copied_message[custom_header] = b64encode(serilization)
 
-            # Next generate a new unique ID we can use for identifying this
-            # message. The only requirement here is to be unique in the account
-            # and to be formatted correctly.
-            new_message_id = "<%s@pygmail>" % (uuid4().hex,)
-            copied_message.replace_header("Message-Id", new_message_id)
-            new_subject = " ** %s - Backup ** " % (copied_message['Subject'],)
-            copied_message.replace_header('Subject', new_subject)
-            loop_cb_args(callback, copied_message)
-
-        self.fetch_raw_body(callback=add_loop_cb(_on_fetch_raw_body))
+        # Next generate a new unique ID we can use for identifying this
+        # message. The only requirement here is to be unique in the account
+        # and to be formatted correctly.
+        new_message_id = "<%s@pygmail>" % (uuid4().hex,)
+        copied_message.replace_header("Message-Id", new_message_id)
+        new_subject = " ** %s - Backup ** " % (copied_message['Subject'],)
+        copied_message.replace_header('Subject', new_subject)
+        loop_cb_args(callback, copied_message)
 
     def _callback_if_error(self, imap_response, callback):
         """Checks to see if the given response, from a raw imaplib2 call,

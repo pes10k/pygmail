@@ -70,4 +70,4 @@ class BufferedSubFile(object):
         except IndexError:
             raise StopIteration
 
-email.feedparser.BufferedSubFile = BufferedSubFile
+# email.feedparser.BufferedSubFile = BufferedSubFile
