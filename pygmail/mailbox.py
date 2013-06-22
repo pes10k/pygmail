@@ -355,7 +355,7 @@ class Mailbox(object):
 
         self.select(callback=add_loop_cb(_on_select_complete))
 
-    def fetch_all(self, uids, callback=None, full=False, **kwargs):
+    def fetch_all(self, uids, full=False, callback=None, **kwargs):
         """Returns a list of messages, each specified by their UID
 
         Returns zero or more GmailMessage objects, each representing a email
@@ -365,7 +365,7 @@ class Mailbox(object):
             uids -- A list of zero or more email uids
 
         Keyword Args:
-            full -- Whether to fetch the entire message, instead of
+            full         -- Whether to fetch the entire message, instead of
                             just the headers.  Note that if only_uids is True,
                             this parameter will have no effect.
             teaser       -- Whether to fetch just a brief, teaser version of the
@@ -403,7 +403,7 @@ class Mailbox(object):
         else:
             loop_cb_args(callback, None)
 
-    def fetch(self, uid, callback=None, full=False, **kwargs):
+    def fetch(self, uid, full=False, callback=None, **kwargs):
         """Returns a single message from the mailbox by UID
 
         Returns a single message object, representing the message in the current
@@ -413,7 +413,7 @@ class Mailbox(object):
             uid -- the numeric, unique identifier of the message in the mailbox
 
         Keyword Args:
-            full -- Whether to fetch the entire message, instead of
+            full         -- Whether to fetch the entire message, instead of
                             just the headers.  Note that if only_uids is True,
                             this parameter will have no effect.
             teaser       -- Whether to fetch just a brief, teaser version of the
@@ -464,7 +464,7 @@ class Mailbox(object):
             only_uids    -- If True, only the UIDs for the given volitile
                             message ids will be returned, instead of the entire
                             populated GmailMessage object
-            full -- Whether to fetch the entire message, instead of
+            full         -- Whether to fetch the entire message, instead of
                             just the headers.  Note that if only_uids is True,
                             this parameter will have no effect.
             only_teasers -- Whether to fetch just a brief, teaser version of the

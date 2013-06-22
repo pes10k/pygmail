@@ -877,7 +877,28 @@ class Attachment(object):
     def __init__(self, msg):
         self.raw = msg
         self.type = msg.get_content_type()
-        self.name = msg.get_filename()
+        self.name_raw = msg.get_filename()
+
+    def name(self):
+        """Returns the original filename for the attachment, if available.
+        This method handles decoding any internationalized encoding of header
+        values
+
+        Return:
+            The name of the file attachment, if available
+        """
+        try:
+            return self._name
+        except AttributeError:
+            # Check to see if the filename is something other than ascii
+            if len(self.name_raw) > 4 and self.name_raw[:2] == "=?" and self.name_raw[-2:] == "?=":
+                file_name = eh.decode_header(self.name_raw)[0]
+                if len(file_name) == 2:
+                    self._name = unicode(file_name[0], file_name[1],
+                                         errors='replace')
+            else:
+                self._name = self.name_raw
+            return self._name
 
     def sha1(self):
         """Returns a hash of the base64 decoded version of the contents of this
