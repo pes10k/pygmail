@@ -4,23 +4,23 @@ import email.utils
 import email.header as eh
 import email.encoders as ENC
 import time
+from imaplib import Internaldate2tuple, ParseFlags
 from base64 import b64decode
 from datetime import datetime
 from quopri import encodestring, decodestring
 from email.parser import HeaderParser
 from email.Iterators import typed_subpart_iterator
 from pygmail.address import Address
-from utilities import loop_cb_args, add_loop_cb, add_loop_cb_args, extract_data, extract_first_bodystructure
+from utilities import loop_cb_args, add_loop_cb, add_loop_cb_args, extract_data, extract_first_bodystructure, parse, ParseError
 from pygmail.errors import is_encoding_error, check_for_response_error
 
 
 # A regular expression used for extracting metadata information out
 # of the raw IMAP returned string.
-METADATA_PATTERN = re.compile(r'(\d*) \(X-GM-MSGID (\d*) X-GM-LABELS \((.*)\) UID (\d*) FLAGS \((.*)\)\s')
+METADATA_PATTERN = re.compile(r'(\d*) \(X-GM-MSGID (\d*) X-GM-LABELS \((.*)\) UID (\d*) INTERNALDATE "(.*?)"')
 
-# A similar regular expression used for extracting metadata when the
-# message doesn't contain any flags
-METADATA_PATTERN_NOFLAGS = re.compile(r'(\d*) \(X-GM-MSGID (\d*) X-GM-LABELS \((.*)\) UID (\d*)\s')
+METADATA_TEASER_PATTERN = re.compile(r'(\d*) \(X-GM-MSGID (\d*) X-GM-LABELS \((.*)\) UID (\d*) INTERNALDATE "(.*?)"')
+
 BODY_STRUCTRUE = re.compile(r'BODYSTRUCTURE \((.*?)\) BODY\[HEADER\]')
 CHARSET_EXTRACTOR = re.compile(r'\("charset" "(.*?)"')
 HEADER_PARSER = HeaderParser()
@@ -108,7 +108,7 @@ def utf8_encode_message_part(message_part, message, default="ascii"):
                             that this message part was a part of
 
     Returns:
-        The payload of the email portion, encoded as UTF-8, or a
+
         UnicodeDecodeError if there was a problem decoding the message
     """
     # If we've already decoded this part of the message in a normalized
@@ -159,26 +159,26 @@ def utf8_encode_message_part(message_part, message, default="ascii"):
 class MessageBase(object):
     """A root class, containing some shared functionality between the full
     and message teaser instances"""
-    def __init__(self, mailbox, metadata, headers):
+    def __init__(self, mailbox, metadata, headers, metadata_pattern):
         self.mailbox = mailbox
         self.account = mailbox.account
         self.conn = self.account.connection
-        metadata_rs = METADATA_PATTERN.match(metadata)
+        metadata_rs = metadata_pattern.match(metadata)
 
-        # If we're loading from a full RFC822 asked for message, the flags
-        # come not in the header string, but at the end of the message
         if not metadata_rs:
-            meta_short_rs = METADATA_PATTERN_NOFLAGS.match(metadata)
-            self.id, self.gmail_id, self.labels, self.uid = meta_short_rs.groups()
-        else:
-            self.id, self.gmail_id, self.labels, self.uid, self.flags = metadata_rs.groups()
+            from tornado.log import app_log
+            app_log.error("Bad formatted metadata string")
+            app_log.error(metadata)
 
-        self.flags = self.flags.split() if self.flags else []
-        self.labels = self.labels.split() if self.labels else []
+        self.id, self.gmail_id, labels, self.uid, internal_date = metadata_rs.groups()
+        self.internal_date = Internaldate2tuple(metadata)
 
-        # Prune the quoted quote hell scape
-        self.flags = [flag.replace(r'\\\\', r'\\') for flag in self.flags]
-        self.labels = [label.replace(r'\\\\', r'\\') for label in self.labels]
+        self.flags = ParseFlags(metadata) or []
+
+        try:
+            self.labels = [str(l) for l in parse(labels)]
+        except ParseError:
+            self.labels = []
 
         ### First parse out the metadata about the email message
         self.headers = HEADER_PARSER.parsestr(headers)
@@ -276,7 +276,8 @@ class MessageBase(object):
             A datetime object
         """
         if not hasattr(self, "_sent_datetime"):
-            self._sent_datetime = datetime.fromtimestamp(time.mktime(self.datetime()))
+            date_parts = self.datetime()
+            self._sent_datetime = datetime.fromtimestamp(time.mktime(date_parts)) if date_parts else None
         return self._sent_datetime
 
 
@@ -284,6 +285,9 @@ class MessageHeaders(MessageBase):
     """A message response from Gmail that contains just the headers of an email
     message (subject, to / from, etc).  This is what all mailbox level functions
     return by default"""
+
+    def __init__(self, mailbox, metadata, headers):
+        super(MessageHeaders, self).__init(mailbox, metadata, headers, METADATA_PATTERN)
 
     def teaser(self, callback=False):
         """Fetches an abbreviated, teaser version of the message, containing
@@ -322,7 +326,7 @@ class MessageTeaser(MessageBase):
                         such as encoding type, the to and from addresses, etc.
             body     -- The body of the first section of the email message
         """
-        super(MessageTeaser, self).__init__(mailbox, metadata, headers)
+        super(MessageTeaser, self).__init__(mailbox, metadata, headers, METADATA_TEASER_PATTERN)
 
         self.charset = 'utf-8'
         self.encoding = '8bit'
@@ -339,14 +343,15 @@ class MessageTeaser(MessageBase):
                 boundary = boundary_matches.group(1)
             first_structure = extract_first_bodystructure(body_structure.lower())
 
-            charset_match = CHARSET_EXTRACTOR.search(first_structure)
-            if charset_match:
-                self.charset = charset_match.group(1)
+            if first_structure:
+                charset_match = CHARSET_EXTRACTOR.search(first_structure)
+                if charset_match:
+                    self.charset = charset_match.group(1)
 
-            encoding_match = ENCODING_EXTRACTOR.search(first_structure)
-            if not encoding_match:
-                encoding_match = ENCODING_EXTRACTOR.search(body_structure.lower())
-            self.encoding = encoding_match.group(0) if encoding_match else "8bit"
+                encoding_match = ENCODING_EXTRACTOR.search(first_structure)
+                if not encoding_match:
+                    encoding_match = ENCODING_EXTRACTOR.search(body_structure.lower())
+                self.encoding = encoding_match.group(0) if encoding_match else "8bit"
 
         if boundary:
             body = extract_first_subsection(body, boundary)
@@ -361,7 +366,12 @@ class MessageTeaser(MessageBase):
         else:
             body_decoded = body
 
-        self.body = unicode(body_decoded, self.charset, errors='replace')
+        try:
+            self.body = unicode(body_decoded, self.charset, errors='replace')
+        except LookupError as error:
+            self.body = error
+        except UnicodeDecodeError as error:
+            self.body = error
 
     def full_message(self, callback=False):
         """Fetches the full version of the message that this message is a teaser
@@ -399,7 +409,7 @@ class Message(MessageBase):
                         represents the mailbox this message exists in
 
         """
-        super(Message, self).__init__(mailbox, metadata, headers)
+        super(Message, self).__init__(mailbox, metadata, headers, METADATA_PATTERN)
 
         self.has_built_body_strings = None
         self.encoding = None
@@ -620,7 +630,7 @@ class Message(MessageBase):
             connection.append(
                 self.mailbox.name,
                 '(%s)' % (' '.join(self.flags),) if self.flags else "()",
-                self.datetime(),
+                self.internal_date or time.gmtime(),
                 raw_string,
                 callback=add_loop_cb(_on_append)
             )
@@ -779,7 +789,8 @@ class Message(MessageBase):
 
         def _on_safe_save_connection(connection, message_copy):
             callback_params = dict(message_copy=message_copy)
-            connection.append(self.mailbox.name, '(\Seen)', self.datetime(),
+            connection.append(self.mailbox.name, '(\Seen)',
+                              self.internal_date or time.gmtime(),
                               message_copy.as_string(),
                               callback=add_loop_cb_args(_on_safe_save_append,
                                                         callback_params))

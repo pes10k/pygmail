@@ -45,8 +45,12 @@ class Address(object):
             return self._address
 
     def parse_address(self):
-        if (isinstance(self.raw_address, list) or isinstance(self.raw_address, tuple)) and len(self.raw_address) == 2:
+        is_iterable = isinstance(self.raw_address, list) or isinstance(self.raw_address, tuple)
+        if is_iterable and len(self.raw_address) == 2:
             name_encoded, self._address = self.raw_address
+        elif is_iterable and len(self.raw_address) == 0:
+            self._name = u''
+            self._address = u''
         else:
             name_encoded, self._address = parseaddr(self.raw_address[0])
         self._address = self._address.strip("<>")

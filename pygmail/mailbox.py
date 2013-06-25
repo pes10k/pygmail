@@ -3,9 +3,10 @@ import string
 import message as GM
 from pygmail.utilities import loop_cb_args, add_loop_cb, extract_data, add_loop_cb_args
 from pygmail.errors import register_callback_if_error, is_auth_error
+from tornado.log import app_log
 
 uid_fields = 'X-GM-MSGID UID'
-meta_fields = 'X-GM-MSGID X-GM-LABELS UID FLAGS'
+meta_fields = 'INTERNALDATE X-GM-MSGID X-GM-LABELS UID FLAGS'
 header_fields = 'BODY.PEEK[HEADER]'
 body_fields = 'BODY.PEEK[]'
 teaser_fields = 'BODY.PEEK[1]'
@@ -19,39 +20,102 @@ imap_queries = dict(
     header='({meta} {header})'.format(meta=meta_fields, header=header_fields)
 )
 
+METADATA = 0
+HEADERS = 1
+BODY = 2
+
 
 def parse_fetch_request(response, mailbox, teaser=False, full=False):
-    messages = []
-    chunk = []
-    for part in response:
-        if part != ")":
-            chunk.append(part)
-        else:
-            if teaser:
-                if len(chunk) == 2:
-                    headers, teaser = chunk
-                    rs = dict(body=teaser[1], headers=headers[1],
-                              metadata=headers[0])
-                    messages.append(GM.MessageTeaser(mailbox, **rs))
-                else:
-                    # Some messages we encounter won't have any body section
-                    # (such as if we reqested the teaser version but the
-                    # message doesn't have a teaser).  In this case, just skip
-                    # over the message and continue on
-                    try:
-                        rs = dict(body='', metadata=chunk[0], headers=chunk[1])
-                        messages.append(GM.MessageTeaser(mailbox, **rs))
-                    except IndexError:
-                        pass
-            elif full:
-                rs = dict(body=chunk[0][1], headers=chunk[0][1],
-                          metadata=chunk[0][0])
-                messages.append(GM.Message(mailbox, **rs))
-            else:
-                rs = dict(headers=chunk[0][1], metadata=chunk[0][0])
-                messages.append(GM.MessageHeaders(mailbox, **rs))
 
-            chunk[:] = []
+    messages = []
+
+    message_complete = False
+    if teaser:
+        end_metadata = False
+        end_header = False
+        metadata_section = ''
+        header_section = ''
+        body_section = ''
+        for part in response:
+            if isinstance(part, basestring):
+                message_complete = True
+            else:
+                for sub_part in part:
+                    if not end_metadata:
+                        metadata_section += sub_part
+                        if 'BODY[HEADER]' in sub_part:
+                            end_metadata = True
+                    elif not end_header:
+                        if 'BODY[1]' in sub_part:
+                            end_header = True
+                        else:
+                            header_section += sub_part
+                        if 'BODY[1] NIL)' in sub_part:
+                            message_complete = True
+                    else:
+                        body_section += sub_part
+            if message_complete:
+                messages.append(GM.MessageTeaser(mailbox,
+                                                 metadata=metadata_section,
+                                                 headers=header_section,
+                                                 body=body_section))
+                message_complete = False
+                end_metadata = False
+                end_header = False
+                metadata_section = ''
+                header_section = ''
+                body_section = ''
+    # Full messages just come in two tuples, the first being the full message
+    # test, and the second a terminator
+    elif full:
+        message_parts = []
+        for part in response:
+            # The first thing we expect to see when iterating over parts of
+            # a fill message is a single tuple, with two parts in it (ie
+            # a nested tuple).  The first part will be the metadata, the second
+            # will be both the headers and the body (since the message class
+            # parses both from the same contents)
+            if len(message_parts) == 0:
+                message_parts.append(part[0])
+                message_parts.append(part[1])
+                message_parts.append(part[1])
+            # Before we complete the message though, we need to read off the
+            # terminating section of the complete message. The below check
+            # has the effect of ignoring every part of a set of full messages
+            elif len(message_parts) == 3:
+                message_complete = True
+
+            if message_complete:
+                messages.append(GM.Message(mailbox,
+                                           metadata=message_parts[METADATA],
+                                           headers=message_parts[HEADERS],
+                                           body=message_parts[BODY]))
+                message_parts[:] = []
+                message_complete = False
+    # The remaining option is that we're only reading headers from the mailbox
+    # in this case, we also expect pairs of values, the first being a nested
+    # tuple of headers and metadata (ie [(metadata, headers)]), and following
+    # that a terminating paren character
+    else:
+        message_parts = []
+        for part in response:
+            # If we don't currently have any message parts capture,
+            # we expect the next chunk to be a tuple, which is nested and
+            # contains two subparts, the metadata and the headers
+            if len(message_parts) == 0:
+                message_parts.append(part[0][0])
+                message_parts.append(part[0][1])
+            # Otherwise, we expect to see a terminator character, which we
+            # ignore / don't store, and complete the message
+            elif len(message_parts) == 2:
+                message_complete = True
+
+            if message_complete:
+                messages.append(GM.MessageHeaders(mailbox,
+                                                  metadata=message_parts[METADATA],
+                                                  headers=message_parts[HEADERS]))
+                message_parts[:] = []
+                message_complete = False
     return messages
 
 
@@ -312,7 +376,7 @@ class Mailbox(object):
 
         self.select(callback=add_loop_cb(_on_mailbox_selected))
 
-    def messages(self, limit=100, offset=0, only_uids=False, callback=None):
+    def messages(self, limit=100, offset=0, callback=None, **kwargs):
         """Returns a list of all the messages in the inbox
 
         Fetches a list of all messages in the inbox.  This list is by default
@@ -326,6 +390,13 @@ class Mailbox(object):
                          messages in the inbox
             only_uids -- If True, only the UIDs of the matching messages will
                          be returned, instead of full message headers.
+            full      -- Whether to fetch the entire message, instead of
+                         just the headers.  Note that if only_uids is True,
+                         this parameter will have no effect.
+            teaser    -- Whether to fetch just a brief, teaser version of the
+                         body (ie the first mime section).  Note that this
+                         option is incompatible with the full
+                         option, and the former will take precedence
 
         Return:
 
@@ -336,6 +407,10 @@ class Mailbox(object):
             just those returned from the limit-offset parameters)
 
         """
+        only_teasers = kwargs.get('teaser', False)
+        full = kwargs.get('full', False)
+        only_uids = kwargs.get('only_uids', False)
+
         def _on_messages_by_id(messages):
             loop_cb_args(callback, messages)
 
@@ -345,7 +420,9 @@ class Mailbox(object):
                 ids = string.split(data[0])
                 ids_to_fetch = page_from_list(ids, limit, offset)
                 self.messages_by_id(ids_to_fetch, only_uids=only_uids,
-                                    callback=add_loop_cb(_on_messages_by_id))
+                                    full=full,
+                                    callback=add_loop_cb(callback),
+                                    teaser=only_teasers)
 
         def _on_connection(connection):
             connection.search(None, 'ALL', callback=add_loop_cb(_on_search))
