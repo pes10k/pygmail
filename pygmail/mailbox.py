@@ -3,7 +3,6 @@ import string
 import message as GM
 from pygmail.utilities import loop_cb_args, add_loop_cb, extract_data, add_loop_cb_args
 from pygmail.errors import register_callback_if_error, is_auth_error
-from tornado.log import app_log
 
 uid_fields = 'X-GM-MSGID UID'
 meta_fields = 'INTERNALDATE X-GM-MSGID X-GM-LABELS UID FLAGS'
@@ -103,8 +102,8 @@ def parse_fetch_request(response, mailbox, teaser=False, full=False):
             # we expect the next chunk to be a tuple, which is nested and
             # contains two subparts, the metadata and the headers
             if len(message_parts) == 0:
-                message_parts.append(part[0][0])
-                message_parts.append(part[0][1])
+                message_parts.append(part[0])
+                message_parts.append(part[1])
             # Otherwise, we expect to see a terminator character, which we
             # ignore / don't store, and complete the message
             elif len(message_parts) == 2:

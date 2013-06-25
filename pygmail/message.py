@@ -174,9 +174,10 @@ class MessageBase(object):
         self.internal_date = Internaldate2tuple(metadata)
 
         self.flags = ParseFlags(metadata) or []
+        self.labels_raw = labels
 
         try:
-            self.labels = [str(l) for l in parse(labels)]
+            self.labels = list(parse(labels))
         except ParseError:
             self.labels = []
 
@@ -280,6 +281,94 @@ class MessageBase(object):
             self._sent_datetime = datetime.fromtimestamp(time.mktime(date_parts)) if date_parts else None
         return self._sent_datetime
 
+    def delete(self, callback=None):
+        """Deletes the message from the IMAP server
+
+        Returns:
+            True on success, and in all other instances an error object
+        """
+        def _on_original_mailbox_reselected(imap_response):
+            if not self._callback_if_error(imap_response, callback):
+                loop_cb_args(callback, True)
+
+        def _on_recevieved_connection_6(connection):
+            connection.select(self.mailbox.name,
+                              callback=add_loop_cb(_on_original_mailbox_reselected))
+
+        def _on_expunge_complete(imap_response):
+            if not self._callback_if_error(imap_response, callback):
+                self.conn(callback=add_loop_cb(_on_recevieved_connection_6))
+
+        def _on_recevieved_connection_5(connection):
+            connection.expunge(callback=add_loop_cb(_on_expunge_complete))
+
+        def _on_delete_complete(imap_response):
+            if not self._callback_if_error(imap_response, callback):
+                self.conn(callback=add_loop_cb(_on_recevieved_connection_5))
+
+        def _on_received_connection_4(connection, deleted_uid):
+            connection.uid('STORE', deleted_uid, '+FLAGS',
+                           '\\Deleted',
+                           callback=add_loop_cb(_on_delete_complete))
+
+        def _on_search_for_message_complete(imap_response):
+            if not self._callback_if_error(imap_response, callback):
+                data = extract_data(imap_response)
+                deleted_uid = data[0].split()[-1]
+                callback_params = dict(deleted_uid=deleted_uid)
+                self.conn(callback=add_loop_cb_args(_on_received_connection_4,
+                                                    callback_params))
+
+        def _on_received_connection_3(connection):
+            connection.uid('SEARCH',
+                           '(HEADER Message-ID "' + self.message_id + '")',
+                           callback=add_loop_cb(_on_search_for_message_complete))
+
+        def _on_trash_selected(imap_response):
+            if not self._callback_if_error(imap_response, callback):
+                self.conn(callback=add_loop_cb(_on_received_connection_3))
+
+        def _on_received_connection_2(connection):
+            connection.select("[Gmail]/Trash",
+                              callback=add_loop_cb(_on_trash_selected))
+
+        def _on_message_moved(imap_response):
+            if not self._callback_if_error(imap_response, callback):
+                self.conn(callback=add_loop_cb(_on_received_connection_2))
+
+        def _on_received_connection(connection):
+            connection.uid('COPY', self.uid, "[Gmail]/Trash",
+                           callback=add_loop_cb(_on_message_moved))
+
+        def _on_mailbox_select(is_selected):
+            self.conn(callback=add_loop_cb(_on_received_connection))
+
+        self.mailbox.select(callback=add_loop_cb(_on_mailbox_select))
+
+    def _callback_if_error(self, imap_response, callback):
+        """Checks to see if the given response, from a raw imaplib2 call,
+        is an error.  If so, it registers the given callback on the tornado
+        IO Loop
+
+        Args:
+            imap_response -- The 3 part tuple (response, cb_arg, error) that
+                             imaplib2 returns as a result of any callback
+                             response
+            callback      -- The callback function expecting a valid response
+                             from the IMAP server
+
+        Returns:
+            True if the given imap_response was an error and a callback has
+            be registered to handle.  Otherwise False.
+        """
+        error = check_for_response_error(imap_response)
+        if error:
+            error.context = self
+            loop_cb_args(callback, error)
+            return True
+        else:
+            return False
+
 
 class MessageHeaders(MessageBase):
     """A message response from Gmail that contains just the headers of an email
@@ -287,7 +376,7 @@ class MessageHeaders(MessageBase):
     return by default"""
 
     def __init__(self, mailbox, metadata, headers):
-        super(MessageHeaders, self).__init(mailbox, metadata, headers, METADATA_PATTERN)
+        super(MessageHeaders, self).__init__(mailbox, metadata, headers, METADATA_PATTERN)
 
     def teaser(self, callback=False):
         """Fetches an abbreviated, teaser version of the message, containing
@@ -523,70 +612,6 @@ class Message(MessageBase):
         """
         return self.raw.as_string()
 
-    def delete(self, callback=None):
-        """Deletes the message from the IMAP server
-
-        Returns:
-            True on success, and in all other instances an error object
-        """
-        def _on_original_mailbox_reselected(imap_response):
-            if not self._callback_if_error(imap_response, callback):
-                loop_cb_args(callback, True)
-
-        def _on_recevieved_connection_6(connection):
-            connection.select(self.mailbox.name,
-                              callback=add_loop_cb(_on_original_mailbox_reselected))
-
-        def _on_expunge_complete(imap_response):
-            if not self._callback_if_error(imap_response, callback):
-                self.conn(callback=add_loop_cb(_on_recevieved_connection_6))
-
-        def _on_recevieved_connection_5(connection):
-            connection.expunge(callback=add_loop_cb(_on_expunge_complete))
-
-        def _on_delete_complete(imap_response):
-            if not self._callback_if_error(imap_response, callback):
-                self.conn(callback=add_loop_cb(_on_recevieved_connection_5))
-
-        def _on_received_connection_4(connection, deleted_uid):
-            connection.uid('STORE', deleted_uid, '+FLAGS',
-                           '\\Deleted',
-                           callback=add_loop_cb(_on_delete_complete))
-
-        def _on_search_for_message_complete(imap_response):
-            if not self._callback_if_error(imap_response, callback):
-                data = extract_data(imap_response)
-                deleted_uid = data[0].split()[-1]
-                callback_params = dict(deleted_uid=deleted_uid)
-                self.conn(callback=add_loop_cb_args(_on_received_connection_4,
-                                                    callback_params))
-
-        def _on_received_connection_3(connection):
-            connection.uid('SEARCH',
-                           '(HEADER Message-ID "' + self.message_id + '")',
-                           callback=add_loop_cb(_on_search_for_message_complete))
-
-        def _on_trash_selected(imap_response):
-            if not self._callback_if_error(imap_response, callback):
-                self.conn(callback=add_loop_cb(_on_received_connection_3))
-
-        def _on_received_connection_2(connection):
-            connection.select("[Gmail]/Trash",
-                              callback=add_loop_cb(_on_trash_selected))
-
-        def _on_message_moved(imap_response):
-            if not self._callback_if_error(imap_response, callback):
-                self.conn(callback=add_loop_cb(_on_received_connection_2))
-
-        def _on_received_connection(connection):
-            connection.uid('COPY', self.uid, "[Gmail]/Trash",
-                           callback=add_loop_cb(_on_message_moved))
-
-        def _on_mailbox_select(is_selected):
-            self.conn(callback=add_loop_cb(_on_received_connection))
-
-        self.mailbox.select(callback=add_loop_cb(_on_mailbox_select))
-
     def save(self, safe_label=None, header_label="PyGmail", callback=None):
         """Copies changes to the current message to the server
 
@@ -615,7 +640,18 @@ class Message(MessageBase):
                 loop_cb_args(callback, True)
 
         def _on_post_append_connection(connection):
-            labels_value = '(%s)' % (' '.join(self.labels),) if self.labels else "()"
+            # Since the X-GM-LABELS are formmated in a very non ovious way
+            # using ATOM, STRING, and ASTRING formatting, each with different
+            # types of escaping, we don't bother trying to parse it, at least
+            # for the time being.  We just send the raw value sent to use
+            # from gmail back at them.
+            #
+            # This has the substantial downside though that there is no
+            # nice / easy way to add / remove labels from pygmail messages,
+            # at least currently
+            #
+            # @todo parse and rewrite labels correctly
+            labels_value = '(%s)' % (self.labels_raw or '',)
             connection.uid("STORE", self.uid,
                            "+X-GM-LABELS", labels_value,
                            callback=add_loop_cb(_on_post_labeling))
@@ -645,15 +681,12 @@ class Message(MessageBase):
             self.mailbox.select(callback=add_loop_cb_args(_on_select,
                                                           callback_params))
 
-        def _on_as_string(raw_string):
-            callback_params = dict(raw_string=raw_string)
-            # If we're not using the safe / transactional method of creating
-            # a copy before we delete the existing version, we can just skip
-            # ahead to the delete action. Otherwise, we need to first create
-            # a safe version of this message.
-            self.delete(callback=add_loop_cb_args(_on_delete, callback_params))
-
-        self.as_string(callback=add_loop_cb(_on_as_string))
+        callback_params = dict(raw_string=self.as_string())
+        # If we're not using the safe / transactional method of creating
+        # a copy before we delete the existing version, we can just skip
+        # ahead to the delete action. Otherwise, we need to first create
+        # a safe version of this message.
+        self.delete(callback=add_loop_cb_args(_on_delete, callback_params))
 
     def replace(self, find, replace, callback=None):
         """Performs a body-wide string search and replace
@@ -854,30 +887,6 @@ class Message(MessageBase):
         new_subject = " ** %s - Backup ** " % (copied_message['Subject'],)
         copied_message.replace_header('Subject', new_subject)
         loop_cb_args(callback, copied_message)
-
-    def _callback_if_error(self, imap_response, callback):
-        """Checks to see if the given response, from a raw imaplib2 call,
-        is an error.  If so, it registers the given callback on the tornado
-        IO Loop
-
-        Args:
-            imap_response -- The 3 part tuple (response, cb_arg, error) that
-                             imaplib2 returns as a result of any callback
-                             response
-            callback      -- The callback function expecting a valid response
-                             from the IMAP server
-
-        Returns:
-            True if the given imap_response was an error and a callback has
-            be registered to handle.  Otherwise False.
-        """
-        error = check_for_response_error(imap_response)
-        if error:
-            error.context = self
-            loop_cb_args(callback, error)
-            return True
-        else:
-            return False
 
 
 class Attachment(object):
