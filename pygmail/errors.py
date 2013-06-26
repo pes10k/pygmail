@@ -4,6 +4,7 @@ All of this is aimed to provide Exception handling like functionality in a
 callback based environment."""
 
 from pygmail.utilities import loop_cb_args
+from tornado.log import app_log
 
 
 def register_callback_if_error(imap_response, callback, require_ok=True):
@@ -58,7 +59,7 @@ def check_for_response_error(imap_response, require_ok=True):
     response, cb_arg, error = imap_response
     if response is None:
         if __debug__:
-            print error[1]
+            app_log.error(error[1])
         return IMAPError(error[1])
     else:
         typ, data = response

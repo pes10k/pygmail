@@ -582,7 +582,7 @@ class Mailbox(object):
         def _on_search_complete(imap_response):
             if not register_callback_if_error(imap_response, callback):
                 data = extract_data(imap_response)
-                if len(data) == 0:
+                if len(data) == 0 or not data[0]:
                     loop_cb_args(callback, None)
                 else:
                     uid = data[0]
@@ -638,7 +638,6 @@ class Mailbox(object):
                         uids = [string.split(elm, " ")[4][:-1] for elm in data]
                         loop_cb_args(callback, uids)
                     else:
-                        print "ABC"
                         messages = parse_fetch_request(data, self, teasers, full, gm_ids)
                         loop_cb_args(callback, messages)
 

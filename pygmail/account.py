@@ -4,7 +4,7 @@ from pygmail.utilities import loop_cb_args, add_loop_cb, extract_data, extract_t
 from pygmail.errors import register_callback_if_error, is_auth_error, AuthError, check_for_response_error, is_imap_error, IMAPError
 
 
-__version__ = '0.3'
+__version__ = '0.4'
 
 
 class Account(object):
