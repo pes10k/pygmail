@@ -4,6 +4,8 @@ import message as GM
 from pygmail.utilities import loop_cb_args, add_loop_cb, extract_data, add_loop_cb_args
 from pygmail.errors import register_callback_if_error, is_auth_error
 
+GM_ID_EXTRACTOR = re.compile(r'\d+ \(X-GM-MSGID (\d+)\)')
+
 uid_fields = 'X-GM-MSGID UID'
 meta_fields = 'INTERNALDATE X-GM-MSGID X-GM-LABELS UID FLAGS'
 header_fields = 'BODY.PEEK[HEADER]'
@@ -11,6 +13,7 @@ body_fields = 'BODY.PEEK[]'
 teaser_fields = 'BODY.PEEK[1]'
 
 imap_queries = dict(
+    gm_id='(X-GM-MSGID)',
     uid='({uid})'.format(uid=uid_fields),
     body='({meta} {body})'.format(meta=meta_fields, body=body_fields),
     teaser='({meta} BODYSTRUCTURE {header} {teaser})'.format(meta=meta_fields,
@@ -24,12 +27,23 @@ HEADERS = 1
 BODY = 2
 
 
-def parse_fetch_request(response, mailbox, teaser=False, full=False):
+def parse_fetch_request(response, mailbox, teaser=False, full=False, gm_id=False):
 
     messages = []
 
+    # Quickly we can search for the simplest case, where we have no
+    # message parts to return
+    if not response or not response[0]:
+        return messages
+
     message_complete = False
-    if teaser:
+
+    if gm_id:
+        for part in response:
+            gm_id_match = GM_ID_EXTRACTOR.match(part)
+            if gm_id_match:
+                messages.append(gm_id_match.group(1))
+    elif teaser:
         end_metadata = False
         end_header = False
         metadata_section = ''
@@ -339,6 +353,8 @@ class Mailbox(object):
             limit        -- The maximum number of messages to return
             offset       -- The first message to return out of the entire set of
                             messages in the inbox
+            gm_ids       -- If True, only the unique, persistant X-GM-MSGID
+                            value for the email message will be returned
             only_uids    -- If True, only the UIDs of the matching messages will
                             be returned, instead of full message headers.
             full         -- Whether to fetch the entire message, instead of
@@ -354,7 +370,8 @@ class Mailbox(object):
             A list of messages or uids (depending on the call arguments) in case
             of success, and an IMAPError object in all other cases.
         """
-        only_teasers = kwargs.get("teaser")
+        teasers = kwargs.get("teaser")
+        gm_ids = kwargs.get('gm_ids')
 
         def _on_search(imap_response):
             if not register_callback_if_error(imap_response, callback):
@@ -364,7 +381,8 @@ class Mailbox(object):
                 self.messages_by_id(ids_to_fetch, only_uids=only_uids,
                                     full=full,
                                     callback=add_loop_cb(callback),
-                                    teaser=only_teasers)
+                                    teaser=teasers,
+                                    gm_ids=gm_ids)
 
         def _on_connection(connection):
             rs, data = connection.search(None, 'X-GM-RAW', term,
@@ -387,6 +405,8 @@ class Mailbox(object):
                          everything will be returned
             offset    -- The first message to return out of the entire set of
                          messages in the inbox
+            gm_ids    -- If True, only the unique, persistant X-GM-MSGID
+                         value for the email message will be returned
             only_uids -- If True, only the UIDs of the matching messages will
                          be returned, instead of full message headers.
             full      -- Whether to fetch the entire message, instead of
@@ -406,9 +426,10 @@ class Mailbox(object):
             just those returned from the limit-offset parameters)
 
         """
-        only_teasers = kwargs.get('teaser', False)
-        full = kwargs.get('full', False)
-        only_uids = kwargs.get('only_uids', False)
+        teasers = kwargs.get('teaser')
+        full = kwargs.get('full')
+        only_uids = kwargs.get('only_uids')
+        gm_ids = kwargs.get('gm_ids')
 
         def _on_messages_by_id(messages):
             loop_cb_args(callback, messages)
@@ -421,7 +442,8 @@ class Mailbox(object):
                 self.messages_by_id(ids_to_fetch, only_uids=only_uids,
                                     full=full,
                                     callback=add_loop_cb(callback),
-                                    teaser=only_teasers)
+                                    teaser=teasers,
+                                    gm_ids=gm_ids)
 
         def _on_connection(connection):
             connection.search(None, 'ALL', callback=add_loop_cb(_on_search))
@@ -441,30 +463,35 @@ class Mailbox(object):
             uids -- A list of zero or more email uids
 
         Keyword Args:
-            full         -- Whether to fetch the entire message, instead of
-                            just the headers.  Note that if only_uids is True,
-                            this parameter will have no effect.
-            teaser       -- Whether to fetch just a brief, teaser version of the
-                            body (ie the first mime section).  Note that this
-                            option is incompatible with the full
-                            option, and the former will take precedence
+            gm_ids  -- If True, only the unique, persistant X-GM-MSGID
+                       value for the email message will be returned
+            full    -- Whether to fetch the entire message, instead of
+                       just the headers.  Note that if only_uids is True,
+                       this parameter will have no effect.
+            teaser  -- Whether to fetch just a brief, teaser version of the
+                       body (ie the first mime section).  Note that this
+                       option is incompatible with the full
+                       option, and the former will take precedence
 
         Returns:
             Zero or more pygmail.message.Message objects, representing any
             messages that matched a provided uid
         """
-        only_teasers = kwargs.get("teaser")
+        teasers = kwargs.get("teaser")
+        gm_ids = kwargs.get('gm_ids')
 
         def _on_fetch(imap_response):
             if not register_callback_if_error(imap_response, callback):
                 data = extract_data(imap_response)
-                messages = parse_fetch_request(data, self, only_teasers, full)
+                messages = parse_fetch_request(data, self, teasers, full, gm_ids)
                 loop_cb_args(callback, messages)
 
         def _on_connection(connection):
-            if full:
+            if gm_ids:
+                request = imap_queries["gm_id"]
+            elif full:
                 request = imap_queries["body"]
-            elif only_teasers:
+            elif teasers:
                 request = imap_queries["teaser"]
             else:
                 request = imap_queries["header"]
@@ -489,6 +516,56 @@ class Mailbox(object):
             uid -- the numeric, unique identifier of the message in the mailbox
 
         Keyword Args:
+            gm_ids  -- If True, only the unique, persistant X-GM-MSGID
+                       value for the email message will be returned
+            full    -- Whether to fetch the entire message, instead of
+                       just the headers.  Note that if only_uids is True,
+                       this parameter will have no effect.
+            teaser  -- Whether to fetch just a brief, teaser version of the
+                       body (ie the first mime section).  Note that this
+                       option is incompatible with the full
+                       option, and the former will take precedence
+
+        Returns:
+            A pygmail.message.Message object representing the email message, or
+            None if none could be found.  If an error is encountered, an
+            IMAPError object will be returned.
+        """
+        teasers = kwargs.get("teaser")
+        gm_ids = kwargs.get('gm_ids')
+
+        def _on_fetch(imap_response):
+            if not register_callback_if_error(imap_response, callback):
+                data = extract_data(imap_response)
+                messages = parse_fetch_request(data, self, teasers, full, gm_ids)
+                loop_cb_args(callback, messages[0] if len(messages) > 0 else None)
+
+        def _on_connection(connection):
+            if gm_ids:
+                request = imap_queries["gm_id"]
+            elif full:
+                request = imap_queries["body"]
+            elif teasers:
+                request = imap_queries["teaser"]
+            else:
+                request = imap_queries["header"]
+
+            connection.uid("FETCH", uid, request,
+                           callback=add_loop_cb(_on_fetch))
+
+        def _on_select(result):
+            self.account.connection(callback=add_loop_cb(_on_connection))
+
+        self.select(callback=add_loop_cb(_on_select))
+
+    def fetch_gm_id(self, gm_id, full=False, callback=None, **kwargs):
+        """Fetches a single message from the mailbox, specified by the
+        given X-GM-MSGID.
+
+        Arguments:
+            gm_id -- a numeric, globally unique identifier for a gmail message
+
+        Keyword Args:
             full         -- Whether to fetch the entire message, instead of
                             just the headers.  Note that if only_uids is True,
                             this parameter will have no effect.
@@ -502,24 +579,18 @@ class Mailbox(object):
             None if none could be found.  If an error is encountered, an
             IMAPError object will be returned.
         """
-        only_teasers = kwargs.get("teaser")
-
-        def _on_fetch(imap_response):
+        def _on_search_complete(imap_response):
             if not register_callback_if_error(imap_response, callback):
                 data = extract_data(imap_response)
-                messages = parse_fetch_request(data, self, only_teasers, full)
-                loop_cb_args(callback, messages[0])
+                if len(data) == 0:
+                    loop_cb_args(callback, None)
+                else:
+                    uid = data[0]
+                    self.fetch(uid, full=full, callback=callback, **kwargs)
 
         def _on_connection(connection):
-            if full:
-                request = imap_queries["body"]
-            elif only_teasers:
-                request = imap_queries["teaser"]
-            else:
-                request = imap_queries["header"]
-
-            connection.uid("FETCH", uid, request,
-                           callback=add_loop_cb(_on_fetch))
+            connection.uid('search', None, 'X-GM-MSGID', gm_id,
+                           callback=add_loop_cb(_on_search_complete))
 
         def _on_select(result):
             self.account.connection(callback=add_loop_cb(_on_connection))
@@ -552,7 +623,8 @@ class Mailbox(object):
             A list of zero or more message objects (or uids) if success, and
             an error object in all other situations
         """
-        only_teasers = kwargs.get("teaser")
+        teasers = kwargs.get("teaser")
+        gm_ids = kwargs.get('gm_ids')
 
         # If we were told to fetch no messages, fast "callback" and don't
         # bother doing any network io
@@ -566,15 +638,18 @@ class Mailbox(object):
                         uids = [string.split(elm, " ")[4][:-1] for elm in data]
                         loop_cb_args(callback, uids)
                     else:
-                        messages = parse_fetch_request(data, self, only_teasers, full)
+                        print "ABC"
+                        messages = parse_fetch_request(data, self, teasers, full, gm_ids)
                         loop_cb_args(callback, messages)
 
             def _on_connection(connection):
-                if only_uids:
+                if gm_ids:
+                    request = imap_queries["gm_id"]
+                elif only_uids:
                     request = imap_queries["uid"]
                 elif full:
                     request = imap_queries["body"]
-                elif only_teasers:
+                elif teasers:
                     request = imap_queries["teaser"]
                 else:
                     request = imap_queries["header"]

@@ -6,13 +6,14 @@ import email.encoders as ENC
 import time
 from imaplib import Internaldate2tuple, ParseFlags
 from base64 import b64decode
-from datetime import datetime
+from datetime import datetime, timedelta
 from quopri import encodestring, decodestring
 from email.parser import HeaderParser
 from email.Iterators import typed_subpart_iterator
 from pygmail.address import Address
-from utilities import loop_cb_args, add_loop_cb, add_loop_cb_args, extract_data, extract_first_bodystructure, parse, ParseError
+from utilities import loop_cb_args, add_loop_cb, add_loop_cb_args, extract_data, extract_first_bodystructure, parse, ParseError, io_loop
 from pygmail.errors import is_encoding_error, check_for_response_error
+from tornado.log import app_log
 
 
 # A regular expression used for extracting metadata information out
@@ -166,7 +167,6 @@ class MessageBase(object):
         metadata_rs = metadata_pattern.match(metadata)
 
         if not metadata_rs:
-            from tornado.log import app_log
             app_log.error("Bad formatted metadata string")
             app_log.error(metadata)
 
@@ -307,6 +307,7 @@ class MessageBase(object):
                 self.conn(callback=add_loop_cb(_on_recevieved_connection_5))
 
         def _on_received_connection_4(connection, deleted_uid):
+            del self.num_tries
             connection.uid('STORE', deleted_uid, '+FLAGS',
                            '\\Deleted',
                            callback=add_loop_cb(_on_delete_complete))
@@ -314,21 +315,56 @@ class MessageBase(object):
         def _on_search_for_message_complete(imap_response):
             if not self._callback_if_error(imap_response, callback):
                 data = extract_data(imap_response)
-                deleted_uid = data[0].split()[-1]
-                callback_params = dict(deleted_uid=deleted_uid)
-                self.conn(callback=add_loop_cb_args(_on_received_connection_4,
-                                                    callback_params))
+
+                # Its possible here that we've tried to select the message
+                # we want to delete from the trash bin before google has
+                # registered it there for us.  If our search attempt returned
+                # a uid, then we're good to go and can continue.
+                try:
+                    deleted_uid = data[0].split()[-1]
+                    callback_params = dict(deleted_uid=deleted_uid)
+                    self.conn(callback=add_loop_cb_args(_on_received_connection_4,
+                                                        callback_params))
+
+                # If not though, we should wait a couple of seconds and try
+                # again.  We'll do this a maximum of 5 times.  If we still
+                # haven't had any luck at this point, we give up and return
+                # False, indiciating we weren't able to delete the message
+                # fully.
+                except IndexError:
+                    self.num_tries += 1
+
+                    # If this is the 5th time we're trying to delete this
+                    # message, we're going to call it a loss and stop trying.
+                    # We do some minimal clean up and then just bail out
+                    # Otherwise, schedule another attempt in 2 seconds and
+                    # hope that gmail has updated its indexes by then
+                    if self.num_tries == 5:
+                        del self.num_tries
+                        app_log.error("Giving up trying to delete message {subject} - {id}".format(subject=self.subject, id=self.message_id))
+                        app_log.error("got response: {response}".format(response=str(imap_response)))
+                        loop_cb_args(callback, False)
+                    else:
+                        app_log.error("Try {num} to delete deleting message {subject} - {id} failed.  Waiting".format(num=self.num_tries, subject=self.subject, id=self.message_id))
+                        app_log.error("got response: {response}".format(response=str(imap_response)))
+                        io_loop().add_timeout(
+                            timedelta(seconds=2),
+                            lambda: _on_trash_selected(None, force_success=True))
 
         def _on_received_connection_3(connection):
-            connection.uid('SEARCH',
-                           '(HEADER Message-ID "' + self.message_id + '")',
+            connection.uid('search', None, 'X-GM-RAW',
+                           '"rfc822msgid:{msg_id}"'.format(msg_id=self.message_id),
                            callback=add_loop_cb(_on_search_for_message_complete))
 
-        def _on_trash_selected(imap_response):
-            if not self._callback_if_error(imap_response, callback):
+        def _on_trash_selected(imap_response, force_success=False):
+            # It can take several attempts for the deleted message to show up
+            # in the trash label / folder.  We'll try 5 times, waiting
+            # two sec between each attempt
+            if force_success or not self._callback_if_error(imap_response, callback):
                 self.conn(callback=add_loop_cb(_on_received_connection_3))
 
         def _on_received_connection_2(connection):
+            self.num_tries = 0
             connection.select("[Gmail]/Trash",
                               callback=add_loop_cb(_on_trash_selected))
 
