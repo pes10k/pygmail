@@ -698,31 +698,26 @@ class Message(MessageBase):
                 self.uid = data[0].split()[2][:-1]
                 self.conn(callback=add_loop_cb(_on_post_append_connection))
 
-        def _on_received_connection(connection, raw_string):
+        def _on_received_connection(connection):
             connection.append(
                 self.mailbox.name,
                 '(%s)' % (' '.join(self.flags),) if self.flags else "()",
                 self.internal_date or time.gmtime(),
-                raw_string,
+                self.raw.as_string(),
                 callback=add_loop_cb(_on_append)
             )
 
-        def _on_select(is_selected, raw_string):
-            callback_params = dict(raw_string=raw_string)
-            self.conn(callback=add_loop_cb_args(_on_received_connection,
-                                                callback_params))
+        def _on_select(is_selected):
+            self.conn(callback=add_loop_cb(_on_received_connection))
 
-        def _on_delete(was_deleted, raw_string):
-            callback_params = dict(raw_string=raw_string)
-            self.mailbox.select(callback=add_loop_cb_args(_on_select,
-                                                          callback_params))
+        def _on_delete(was_deleted):
+            self.mailbox.select(callback=add_loop_cb(_on_select))
 
-        callback_params = dict(raw_string=self.as_string())
         # If we're not using the safe / transactional method of creating
         # a copy before we delete the existing version, we can just skip
         # ahead to the delete action. Otherwise, we need to first create
         # a safe version of this message.
-        self.delete(callback=add_loop_cb_args(_on_delete, callback_params))
+        self.delete(callback=add_loop_cb(_on_delete))
 
     def replace(self, find, replace, callback=None):
         """Performs a body-wide string search and replace
