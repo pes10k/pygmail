@@ -281,8 +281,12 @@ class MessageBase(object):
             self._sent_datetime = datetime.fromtimestamp(time.mktime(date_parts)) if date_parts else None
         return self._sent_datetime
 
-    def delete(self, callback=None):
+    def delete(self, trash_folder, callback=None):
         """Deletes the message from the IMAP server
+
+        Args:
+            trash_folder -- the name of the folder / label that is, in the
+                            current account, the trash container
 
         Returns:
             True on success, and in all other instances an error object
@@ -365,7 +369,7 @@ class MessageBase(object):
 
         def _on_received_connection_2(connection):
             self.num_tries = 0
-            connection.select("[Gmail]/Trash",
+            connection.select(trash_folder,
                               callback=add_loop_cb(_on_trash_selected))
 
         def _on_message_moved(imap_response):
@@ -373,7 +377,7 @@ class MessageBase(object):
                 self.conn(callback=add_loop_cb(_on_received_connection_2))
 
         def _on_received_connection(connection):
-            connection.uid('COPY', self.uid, "[Gmail]/Trash",
+            connection.uid('COPY', self.uid, trash_folder,
                            callback=add_loop_cb(_on_message_moved))
 
         def _on_mailbox_select(is_selected):
@@ -648,13 +652,17 @@ class Message(MessageBase):
         """
         return self.raw.as_string()
 
-    def save(self, safe_label=None, header_label="PyGmail", callback=None):
+    def save(self, trash_folder, safe_label=None, header_label="PyGmail", callback=None):
         """Copies changes to the current message to the server
 
         Since we can't write to or update a message directly in IMAP, this
         method simulates the same effect by deleting the current message, and
         then writing a new message into IMAP that matches the current state
         of the the current message object.
+
+        Args:
+            trash_folder -- the name of the folder / label that is, in the
+                            current account, the trash container
 
         Keyword Args:
             safe_label   -- If not None, a copy of this message will be saved into
@@ -717,9 +725,9 @@ class Message(MessageBase):
         # a copy before we delete the existing version, we can just skip
         # ahead to the delete action. Otherwise, we need to first create
         # a safe version of this message.
-        self.delete(callback=add_loop_cb(_on_delete))
+        self.delete(trash_folder, callback=add_loop_cb(_on_delete))
 
-    def replace(self, find, replace, callback=None):
+    def replace(self, find, replace, trash_folder, callback=None):
         """Performs a body-wide string search and replace
 
         Note that this search-and-replace is pretty dumb, and will fail
@@ -727,12 +735,14 @@ class Message(MessageBase):
         string.
 
         Args:
-            find    -- the search term to look for as a string, or a tuple of
-                       items to replace with corresponding items in the
-                       replace tuple
-            replace -- the string to replace instances of the "find" term with,
-                       or a tuple of terms to replace the corresponding strings
-                       in the find tuple
+            find         -- the search term to look for as a string, or a tuple
+                            of items to replace with corresponding items in the
+                            replace tuple
+            replace      -- the string to replace instances of the "find" term
+                            with, or a tuple of terms to replace the
+                            corresponding strings in the find tuple
+            trash_folder -- the name of the folder / label that is, in the
+                            current account, the trash container
 
         Returns:
             True on success, and in all other instances an error object
@@ -801,7 +811,7 @@ class Message(MessageBase):
                 del part._normalized
                 del part._orig_charset
 
-        self.save(callback=callback)
+        self.save(trash_folder, callback=callback)
 
     def save_copy(self, safe_label, header_label="PyGmail", callback=None):
         """Saves a semi-identical copy of the message in another label / mailbox

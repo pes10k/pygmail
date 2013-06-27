@@ -220,14 +220,16 @@ class Mailbox(object):
 
         self.account.connection(callback=add_loop_cb(_on_connection))
 
-    def delete_message(self, uid, message_id, callback=None):
+    def delete_message(self, uid, message_id, trash_folder, callback=None):
         """Allows for deleting a message by UID, without needing to pulldown
         and populate a Message object first.
 
         Args:
-            uid        -- the uid for a message in the current mailbox
-            message_id -- the message id, from the email headers of the message
-                          to delete
+            uid          -- the uid for a message in the current mailbox
+            message_id   -- the message id, from the email headers of the
+                            message to delete
+            trash_folder -- the name of the folder / label that is, in the
+                            current account, the trash container
 
         Returns:
             A boolean description of whether a message was successfully deleted
@@ -273,7 +275,7 @@ class Mailbox(object):
                 self.conn(callback=add_loop_cb(_on_received_connection_3))
 
         def _on_received_connection_2(connection):
-            connection.select("[Gmail]/Trash",
+            connection.select(trash_folder,
                               callback=add_loop_cb(_on_trash_selected))
 
         def _on_message_moved(imap_response):
@@ -281,7 +283,7 @@ class Mailbox(object):
                 self.conn(callback=add_loop_cb(_on_received_connection_2))
 
         def _on_connection(connection):
-            connection.uid('COPY', uid, "[Gmail]/Trash",
+            connection.uid('COPY', uid, trash_folder,
                            callback=add_loop_cb(_on_message_moved))
 
         def _on_select(was_selected):

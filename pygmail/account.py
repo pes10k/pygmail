@@ -96,16 +96,56 @@ class Account(object):
 
         self.connection(callback=add_loop_cb(_on_connection))
 
-    def mailboxes(self, include_meta=False, callback=None):
+    def all_mailbox(self, callback=None):
+        """Returns a mailbox object that represents the [Gmail]/All Mail folder
+        in the current account.  Note that this will reutrn the correct folder,
+        regardless of the langauge of the current account
+
+        Returns:
+            A pygmail.mailbox.Mailbox instance representing the current,
+            localized version of the [Gmail]/All Mail folder, or None
+            if there was an error and one couldn't be found
+        """
+        def _on_mailboxes(mailboxes):
+            for box in mailboxes:
+                if box.full_name.find('(\HasNoChildren \All)') == 0:
+                    callback(box)
+                    return
+            callback(None)
+
+        if self.boxes:
+            _on_mailboxes(self.boxes)
+        else:
+            self.mailboxes(callback=_on_mailboxes)
+
+    def trash_mailbox(self, callback=None):
+        """Returns a mailbox object that represents the [Gmail]/Trash folder
+        in the current account.  Note that this will reutrn the correct folder,
+        regardless of the langauge of the current account
+
+        Returns:
+            A pygmail.mailbox.Mailbox instance representing the current,
+            localized version of the [Gmail]/Trash folder, or None
+            if there was an error and one couldn't be found
+        """
+        def _on_mailboxes(mailboxes):
+            for box in mailboxes:
+                if box.full_name.find('(\HasNoChildren \Trash)') == 0:
+                    callback(box)
+                    return
+            callback(None)
+
+        if self.boxes:
+            _on_mailboxes(self.boxes)
+        else:
+            self.mailboxes(callback=_on_mailboxes)
+
+    def mailboxes(self, callback=None):
         """Returns a list of all mailboxes in the current account
 
         Keyword Args:
             callback     -- optional callback function, which will cause the
                             conection to operate in an async mode
-            include_meta -- Whether or not the Gmail special meta mailboxes
-                            (such as "All Messages", "Drafts", etc.) should be
-                            included
-
         Returns:
             A list of pygmail.mailbox.Mailbox objects, each representing one
             mailbox in the IMAP account
@@ -119,8 +159,7 @@ class Account(object):
                     data = extract_data(imap_response)
                     self.boxes = []
                     for box in data:
-                        if include_meta or "[" not in box:
-                            self.boxes.append(mailbox.Mailbox(self, box))
+                        self.boxes.append(mailbox.Mailbox(self, box))
                     loop_cb_args(callback, self.boxes)
 
             def _on_connection(connection):
@@ -131,15 +170,12 @@ class Account(object):
 
             self.connection(callback=add_loop_cb(_on_connection))
 
-    def get(self, mailbox_name, callback=None, include_meta=False):
+    def get(self, mailbox_name, callback=None):
         """Returns the mailbox with a given name in the current account
 
         Args:
             mailbox_name -- The name of a mailbox to look for in the current
                             account
-            include_meta -- Whether or not the Gmail special meta mailboxes
-                            (such as "All Messages", "Drafts", etc.) should be
-                            included
 
         Keyword Args:
             callback -- optional callback function, which will cause the
@@ -161,8 +197,7 @@ class Account(object):
                         return
                 loop_cb_args(callback, None)
 
-        self.mailboxes(callback=add_loop_cb(_retreived_mailboxes),
-                       include_meta=include_meta)
+        self.mailboxes(callback=add_loop_cb(_retreived_mailboxes))
 
     def connection(self, callback=None):
         """Creates an authenticated connection to gmail over IMAP
