@@ -926,9 +926,16 @@ class Message(MessageBase):
         # message. The only requirement here is to be unique in the account
         # and to be formatted correctly.
         new_message_id = "<%s@pygmail>" % (uuid4().hex,)
-        copied_message.replace_header("Message-Id", new_message_id)
+
+        try:
+            copied_message.replace_header("Message-Id", new_message_id)
+        except:
+            copied_message.add_header("Message-Id", new_message_id)
         new_subject = " ** %s - Backup ** " % (copied_message['Subject'],)
-        copied_message.replace_header('Subject', new_subject)
+        try:
+            copied_message.replace_header('Subject', new_subject)
+        except KeyError:
+            copied_message.add_header('Subject', new_subject)
         loop_cb_args(callback, copied_message)
 
 
