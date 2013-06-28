@@ -290,12 +290,12 @@ class Mailbox(object):
                     if self.num_tries == 5:
                         del self.num_tries
                         if __debug__:
-                            app_log.error("Giving up trying to delete message {subject} - {id}".format(subject=self.subject, id=self.message_id))
+                            app_log.error("Giving up trying to delete message")
                             app_log.error("got response: {response}".format(response=str(imap_response)))
                         loop_cb_args(callback, False)
                     else:
                         if __debug__:
-                            app_log.error("Try {num} to delete deleting message {subject} - {id} failed.  Waiting".format(num=self.num_tries, subject=self.subject, id=self.message_id))
+                            app_log.error("Try {num} to delete deleting message.  Waiting".format(num=self.num_tries))
                             app_log.error("got response: {response}".format(response=str(imap_response)))
                         io_loop().add_timeout(
                             timedelta(seconds=2),
