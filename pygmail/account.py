@@ -107,11 +107,14 @@ class Account(object):
             if there was an error and one couldn't be found
         """
         def _on_mailboxes(mailboxes):
-            for box in mailboxes:
-                if box.full_name.find('(\HasNoChildren \All)') == 0:
-                    callback(box)
-                    return
-            callback(None)
+            if is_auth_error(mailboxes) or is_imap_error(mailboxes):
+                loop_cb_args(callback, mailboxes)
+            else:
+                for box in mailboxes:
+                    if box.full_name.find('(\HasNoChildren \All)') == 0:
+                        callback(box)
+                        return
+                callback(None)
 
         if self.boxes:
             _on_mailboxes(self.boxes)
@@ -129,11 +132,14 @@ class Account(object):
             if there was an error and one couldn't be found
         """
         def _on_mailboxes(mailboxes):
-            for box in mailboxes:
-                if box.full_name.find('(\HasNoChildren \Trash)') == 0:
-                    callback(box)
-                    return
-            callback(None)
+            if is_auth_error(mailboxes) or is_imap_error(mailboxes):
+                loop_cb_args(callback, mailboxes)
+            else:
+                for box in mailboxes:
+                    if box.full_name.find('(\HasNoChildren \Trash)') == 0:
+                        callback(box)
+                        return
+                callback(None)
 
         if self.boxes:
             _on_mailboxes(self.boxes)
