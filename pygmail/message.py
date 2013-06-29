@@ -176,11 +176,6 @@ class MessageBase(object):
         self.flags = ParseFlags(metadata) or []
         self.labels_raw = labels
 
-        try:
-            self.labels = list(parse(labels))
-        except ParseError:
-            self.labels = []
-
         ### First parse out the metadata about the email message
         self.headers = HEADER_PARSER.parsestr(headers)
 
@@ -244,6 +239,30 @@ class MessageBase(object):
         if not hasattr(self, '_to_address'):
             self._to_address = Address(self.to)
         return self._to_address
+
+    @property
+    def labels(self):
+        """Lazy parse the stored raw string of gmail labels, which is in
+        gmail's combination of ASTRING, STRING and ATOM formats.  Occasionally
+        the parser we're using here falls into an infinite loop, so this can
+        throw a 'RuntimeError' exception.
+
+        Returns:
+            A list of X-GM-LABELS if we can parse them correctly, and otherwise
+            None
+
+        Raises:
+            RuntimeError if there is an error parsing the labels (ie if the
+            library we're using falls into an infinite loop)
+        """
+        try:
+            return self._labels
+        except AttributeError:
+            try:
+                self._labels = list(parse(self.labels_raw))
+            except ParseError:
+                self._labels = None
+            return self._labels
 
     def is_read(self):
         """Checks to see if the message has been flaged as read
@@ -915,7 +934,7 @@ class Message(MessageBase):
                 ""
 
         serialized_data = dict(message_id=self.message_id, flags=self.flags,
-                               labels=self.labels, headers=stripped_headers,
+                               labels=self.labels_raw, headers=stripped_headers,
                                subject=copied_message['Subject'])
 
         serilization = pickle.dumps(serialized_data)
