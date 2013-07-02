@@ -223,10 +223,12 @@ class Account(object):
 
         """
         def _on_authentication(imap_response):
-            response, cb_arg, error = imap_response
+            response, cb_arg, imap_error = imap_response
             if not response or response[0] != "OK":
                 error = "User / OAuth2 token (%s, %s) were not accepted" % (
                     self.email, self.oauth2_token)
+                if imap_error and len(imap_error) > 1:
+                    error += " " + imap_error[1]
                 loop_cb_args(callback, AuthError(error))
             else:
                 self.connected = True

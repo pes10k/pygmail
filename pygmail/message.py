@@ -877,23 +877,20 @@ class Message(MessageBase):
             if not self._callback_if_error(imap_response, callback):
                 data = extract_data(imap_response)
                 message_uid = data[0].split()[2][:-1]
-                callback_params = dict(message_uid=message_uid,
-                                       message_id=message_copy['Message-Id'])
+                cbp = dict(message_uid=message_uid, message_id=message_copy['Message-Id'])
                 self.conn(callback=add_loop_cb_args(_post_safe_save_connection,
-                                                    callback_params))
+                                                    cbp))
 
         def _on_safe_save_connection(connection, message_copy):
-            callback_params = dict(message_copy=message_copy)
+            cbp = dict(message_copy=message_copy)
             connection.append(self.mailbox.name, '(\Seen)',
                               self.internal_date or time.gmtime(),
                               message_copy.as_string(),
-                              callback=add_loop_cb_args(_on_safe_save_append,
-                                                        callback_params))
+                              callback=add_loop_cb_args(_on_safe_save_append, cbp))
 
         def _on_safe_save_message(message_copy):
-            callback_params = dict(message_copy=message_copy)
-            self.conn(callback=add_loop_cb_args(_on_safe_save_connection,
-                                                callback_params))
+            cbp = dict(message_copy=message_copy)
+            self.conn(callback=add_loop_cb_args(_on_safe_save_connection, cbp))
 
         self.safe_save_message(callback=add_loop_cb(_on_safe_save_message))
 
@@ -931,7 +928,7 @@ class Message(MessageBase):
                 del copied_message[header_to_copy]
                 stripped_headers.append((header_to_copy, header_value))
             except:
-                ""
+                pass
 
         serialized_data = dict(message_id=self.message_id, flags=self.flags,
                                labels=self.labels_raw, headers=stripped_headers,
