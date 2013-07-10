@@ -11,7 +11,7 @@ Requirements
 ---
  * [Tornado](http://www.tornadoweb.org/)
  * [Google OAuth2 Client](https://developers.google.com/api-client-library/python/guide/aaa_oauth)
- * [IMAPLib2](http://janeelix.com/piers/python/imaplib2.html)
+ * [imaplib2](https://github.com/bcoe/imaplib2)
 
 Author
 ---

@@ -1,10 +1,11 @@
 import imaplib2
 import mailbox
+import pygmail.errors
 from pygmail.utilities import loop_cb_args, add_loop_cb, extract_data, extract_type
-from pygmail.errors import register_callback_if_error, is_auth_error, AuthError, check_for_response_error, is_imap_error, IMAPError
+from pygmail.errors import is_auth_error, AuthError, check_for_response_error, is_imap_error, IMAPError
 
 
-__version__ = '0.4'
+__version__ = '0.5'
 
 
 class Account(object):
@@ -87,6 +88,7 @@ class Account(object):
                     was_success = data[0] == "Success"
                     loop_cb_args(callback, was_success)
 
+        @pygmail.errors.check_imap_state(callback)
         def _on_connection(connection):
             if is_auth_error(connection):
                 loop_cb_args(callback, connection)
@@ -106,15 +108,13 @@ class Account(object):
             localized version of the [Gmail]/All Mail folder, or None
             if there was an error and one couldn't be found
         """
+        @pygmail.errors.check_imap_response(callback)
         def _on_mailboxes(mailboxes):
-            if is_auth_error(mailboxes) or is_imap_error(mailboxes):
-                loop_cb_args(callback, mailboxes)
-            else:
-                for box in mailboxes:
-                    if box.full_name.find('(\HasNoChildren \All)') == 0:
-                        callback(box)
-                        return
-                callback(None)
+            for box in mailboxes:
+                if box.full_name.find('(\HasNoChildren \All)') == 0:
+                    callback(box)
+                    return
+            callback(None)
 
         if self.boxes:
             _on_mailboxes(self.boxes)
@@ -131,15 +131,13 @@ class Account(object):
             localized version of the [Gmail]/Trash folder, or None
             if there was an error and one couldn't be found
         """
+        @pygmail.errors.check_imap_response(callback)
         def _on_mailboxes(mailboxes):
-            if is_auth_error(mailboxes) or is_imap_error(mailboxes):
-                loop_cb_args(callback, mailboxes)
-            else:
-                for box in mailboxes:
-                    if box.full_name.find('(\HasNoChildren \Trash)') == 0:
-                        callback(box)
-                        return
-                callback(None)
+            for box in mailboxes:
+                if box.full_name.find('(\HasNoChildren \Trash)') == 0:
+                    callback(box)
+                    return
+            callback(None)
 
         if self.boxes:
             _on_mailboxes(self.boxes)
@@ -160,14 +158,15 @@ class Account(object):
         if self.boxes is not None:
             loop_cb_args(callback, self.boxes)
         else:
+            @pygmail.errors.check_imap_response(callback)
             def _on_mailboxes(imap_response):
-                if not register_callback_if_error(imap_response, callback):
-                    data = extract_data(imap_response)
-                    self.boxes = []
-                    for box in data:
-                        self.boxes.append(mailbox.Mailbox(self, box))
-                    loop_cb_args(callback, self.boxes)
+                data = extract_data(imap_response)
+                self.boxes = []
+                for box in data:
+                    self.boxes.append(mailbox.Mailbox(self, box))
+                loop_cb_args(callback, self.boxes)
 
+            @pygmail.errors.check_imap_state(callback)
             def _on_connection(connection):
                 if is_auth_error(connection) or is_imap_error(connection):
                     loop_cb_args(callback, connection)
@@ -193,15 +192,13 @@ class Account(object):
             the mailbox.
 
         """
+        @pygmail.errors.check_imap_response(callback)
         def _retreived_mailboxes(mailboxes):
-            if is_auth_error(mailboxes) or is_imap_error(mailboxes):
-                loop_cb_args(callback, mailboxes)
-            else:
-                for mailbox in mailboxes:
-                    if mailbox.name == mailbox_name:
-                        loop_cb_args(callback, mailbox)
-                        return
-                loop_cb_args(callback, None)
+            for mailbox in mailboxes:
+                if mailbox.name == mailbox_name:
+                    loop_cb_args(callback, mailbox)
+                    return
+            loop_cb_args(callback, None)
 
         self.mailboxes(callback=add_loop_cb(_retreived_mailboxes))
 
@@ -272,15 +269,15 @@ class Account(object):
             True if a connection was closed, and False if this close request
             was a NOOP
         """
+        @pygmail.errors.check_imap_response(callback, require_ok=False)
         def _on_logout(imap_response):
-            if not register_callback_if_error(imap_response, callback, require_ok=False):
-                typ = extract_type(imap_response)
-                self.connected = False
-                loop_cb_args(callback, typ == "BYE")
+            typ = extract_type(imap_response)
+            self.connected = False
+            loop_cb_args(callback, typ == "BYE")
 
+        @pygmail.errors.check_imap_response(callback, require_ok=False)
         def _on_close(imap_response):
-            if not register_callback_if_error(imap_response, callback):
-                self.conn.logout(callback=add_loop_cb(_on_logout))
+            self.conn.logout(callback=add_loop_cb(_on_logout))
 
         if self.last_viewed_mailbox:
             try:
@@ -304,16 +301,16 @@ class Account(object):
             The imaplib2 connection object on success, and an error object
             otherwise
         """
+        @pygmail.errors.check_imap_response(callback)
         def _on_id(imap_response):
-            if not register_callback_if_error(imap_response, callback):
-                loop_cb_args(callback, self.conn)
+            loop_cb_args(callback, self.conn)
 
+        @pygmail.errors.check_imap_state(callback)
         def _on_connection(connection):
             id_params = []
             for k, v in self.id_params.items():
-                id_params.append('"' + k + '"')
-                id_params.append('"' + v + '"')
-            id_string = "(" + " ".join(id_params) + ")"
-            connection.id(id_string, callback=add_loop_cb(_on_id))
+                id_params.append(k)
+                id_params.append(v)
+            connection.id(id_params, callback=add_loop_cb(_on_id))
 
         self.connection(callback=add_loop_cb(_on_connection))

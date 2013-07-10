@@ -4,6 +4,7 @@ import email.utils
 import email.header as eh
 import email.encoders as ENC
 import time
+import pygmail.errors
 from imaplib import Internaldate2tuple, ParseFlags
 from base64 import b64decode
 from datetime import datetime, timedelta
@@ -310,72 +311,76 @@ class MessageBase(object):
         Returns:
             True on success, and in all other instances an error object
         """
+        @pygmail.errors.check_imap_response(callback)
         def _on_original_mailbox_reselected(imap_response):
-            if not self._callback_if_error(imap_response, callback):
-                loop_cb_args(callback, True)
+            loop_cb_args(callback, True)
 
+        @pygmail.errors.check_imap_state(callback)
         def _on_recevieved_connection_6(connection):
             connection.select(self.mailbox.name,
                               callback=add_loop_cb(_on_original_mailbox_reselected))
 
+        @pygmail.errors.check_imap_response(callback)
         def _on_expunge_complete(imap_response):
-            if not self._callback_if_error(imap_response, callback):
-                self.conn(callback=add_loop_cb(_on_recevieved_connection_6))
+            self.conn(callback=add_loop_cb(_on_recevieved_connection_6))
 
+        @pygmail.errors.check_imap_state(callback)
         def _on_recevieved_connection_5(connection):
             connection.expunge(callback=add_loop_cb(_on_expunge_complete))
 
+        @pygmail.errors.check_imap_response(callback)
         def _on_delete_complete(imap_response):
-            if not self._callback_if_error(imap_response, callback):
-                self.conn(callback=add_loop_cb(_on_recevieved_connection_5))
+            self.conn(callback=add_loop_cb(_on_recevieved_connection_5))
 
+        @pygmail.errors.check_imap_state(callback)
         def _on_received_connection_4(connection, deleted_uid):
             del self.num_tries
             connection.uid('STORE', deleted_uid, '+FLAGS',
                            '\\Deleted',
                            callback=add_loop_cb(_on_delete_complete))
 
+        @pygmail.errors.check_imap_response(callback)
         def _on_search_for_message_complete(imap_response):
-            if not self._callback_if_error(imap_response, callback):
-                data = extract_data(imap_response)
+            data = extract_data(imap_response)
 
-                # Its possible here that we've tried to select the message
-                # we want to delete from the trash bin before google has
-                # registered it there for us.  If our search attempt returned
-                # a uid, then we're good to go and can continue.
-                try:
-                    deleted_uid = data[0].split()[-1]
-                    callback_params = dict(deleted_uid=deleted_uid)
-                    self.conn(callback=add_loop_cb_args(_on_received_connection_4,
-                                                        callback_params))
+            # Its possible here that we've tried to select the message
+            # we want to delete from the trash bin before google has
+            # registered it there for us.  If our search attempt returned
+            # a uid, then we're good to go and can continue.
+            try:
+                deleted_uid = data[0].split()[-1]
+                cbp = dict(deleted_uid=deleted_uid)
+                cb = add_loop_cb_args(_on_received_connection_4, cbp)
+                self.conn(callback=cb)
 
-                # If not though, we should wait a couple of seconds and try
-                # again.  We'll do this a maximum of 5 times.  If we still
-                # haven't had any luck at this point, we give up and return
-                # False, indiciating we weren't able to delete the message
-                # fully.
-                except IndexError:
-                    self.num_tries += 1
+            # If not though, we should wait a couple of seconds and try
+            # again.  We'll do this a maximum of 5 times.  If we still
+            # haven't had any luck at this point, we give up and return
+            # False, indiciating we weren't able to delete the message
+            # fully.
+            except IndexError:
+                self.num_tries += 1
 
-                    # If this is the 5th time we're trying to delete this
-                    # message, we're going to call it a loss and stop trying.
-                    # We do some minimal clean up and then just bail out
-                    # Otherwise, schedule another attempt in 2 seconds and
-                    # hope that gmail has updated its indexes by then
-                    if self.num_tries == 5:
-                        del self.num_tries
-                        if __debug__:
-                            app_log.error(u"Giving up trying to delete message {subject} - {id}".format(subject=self.subject, id=self.message_id))
-                            app_log.error("got response: {response}".format(response=str(imap_response)))
-                        loop_cb_args(callback, False)
-                    else:
-                        if __debug__:
-                            app_log.error("Try {num} to delete deleting message {subject} - {id} failed.  Waiting".format(num=self.num_tries, subject=self.subject, id=self.message_id))
-                            app_log.error("got response: {response}".format(response=str(imap_response)))
-                        io_loop().add_timeout(
-                            timedelta(seconds=2),
-                            lambda: _on_trash_selected(None, force_success=True))
+                # If this is the 5th time we're trying to delete this
+                # message, we're going to call it a loss and stop trying.
+                # We do some minimal clean up and then just bail out
+                # Otherwise, schedule another attempt in 2 seconds and
+                # hope that gmail has updated its indexes by then
+                if self.num_tries == 5:
+                    del self.num_tries
+                    if __debug__:
+                        app_log.error(u"Giving up trying to delete message {subject} - {id}".format(subject=self.subject, id=self.message_id))
+                        app_log.error("got response: {response}".format(response=str(imap_response)))
+                    loop_cb_args(callback, False)
+                else:
+                    if __debug__:
+                        app_log.error("Try {num} to delete deleting message {subject} - {id} failed.  Waiting".format(num=self.num_tries, subject=self.subject, id=self.message_id))
+                        app_log.error("got response: {response}".format(response=str(imap_response)))
+                    io_loop().add_timeout(
+                        timedelta(seconds=2),
+                        lambda: _on_trash_selected(None, force_success=True))
 
+        @pygmail.errors.check_imap_state(callback)
         def _on_received_connection_3(connection):
             connection.uid('search', None, 'X-GM-RAW',
                            '"rfc822msgid:{msg_id}"'.format(msg_id=self.message_id),
@@ -385,50 +390,35 @@ class MessageBase(object):
             # It can take several attempts for the deleted message to show up
             # in the trash label / folder.  We'll try 5 times, waiting
             # two sec between each attempt
-            if force_success or not self._callback_if_error(imap_response, callback):
+            if force_success:
                 self.conn(callback=add_loop_cb(_on_received_connection_3))
+            else:
+                is_error = check_for_response_error(imap_response)
+                if is_error:
+                    loop_cb_args(callback, is_error)
+                else:
+                    self.conn(callback=add_loop_cb(_on_received_connection_3))
 
+        @pygmail.errors.check_imap_state(callback)
         def _on_received_connection_2(connection):
             self.num_tries = 0
             connection.select(trash_folder,
                               callback=add_loop_cb(_on_trash_selected))
 
+        @pygmail.errors.check_imap_response(callback)
         def _on_message_moved(imap_response):
-            if not self._callback_if_error(imap_response, callback):
-                self.conn(callback=add_loop_cb(_on_received_connection_2))
+            self.conn(callback=add_loop_cb(_on_received_connection_2))
 
+        @pygmail.errors.check_imap_state(callback)
         def _on_received_connection(connection):
             connection.uid('COPY', self.uid, trash_folder,
                            callback=add_loop_cb(_on_message_moved))
 
+        @pygmail.errors.check_imap_response(callback)
         def _on_mailbox_select(is_selected):
             self.conn(callback=add_loop_cb(_on_received_connection))
 
         self.mailbox.select(callback=add_loop_cb(_on_mailbox_select))
-
-    def _callback_if_error(self, imap_response, callback):
-        """Checks to see if the given response, from a raw imaplib2 call,
-        is an error.  If so, it registers the given callback on the tornado
-        IO Loop
-
-        Args:
-            imap_response -- The 3 part tuple (response, cb_arg, error) that
-                             imaplib2 returns as a result of any callback
-                             response
-            callback      -- The callback function expecting a valid response
-                             from the IMAP server
-
-        Returns:
-            True if the given imap_response was an error and a callback has
-            be registered to handle.  Otherwise False.
-        """
-        error = check_for_response_error(imap_response)
-        if error:
-            error.context = self
-            loop_cb_args(callback, error)
-            return True
-        else:
-            return False
 
 
 class MessageHeaders(MessageBase):
@@ -700,10 +690,11 @@ class Message(MessageBase):
         Returns:
             True on success, and in all other instances an error object
         """
+        @pygmail.errors.check_imap_response(callback)
         def _on_post_labeling(imap_response):
-            if not self._callback_if_error(imap_response, callback):
-                loop_cb_args(callback, True)
+            loop_cb_args(callback, True)
 
+        @pygmail.errors.check_imap_state(callback)
         def _on_post_append_connection(connection):
             # Since the X-GM-LABELS are formmated in a very non ovious way
             # using ATOM, STRING, and ASTRING formatting, each with different
@@ -717,16 +708,16 @@ class Message(MessageBase):
             #
             # @todo parse and rewrite labels correctly
             labels_value = '(%s)' % (self.labels_raw or '',)
-            connection.uid("STORE", self.uid,
-                           "+X-GM-LABELS", labels_value,
+            connection.uid("STORE", self.uid, "+X-GM-LABELS", labels_value,
                            callback=add_loop_cb(_on_post_labeling))
 
+        @pygmail.errors.check_imap_response(callback)
         def _on_append(imap_response):
-            if not self._callback_if_error(imap_response, callback):
-                data = extract_data(imap_response)
-                self.uid = data[0].split()[2][:-1]
-                self.conn(callback=add_loop_cb(_on_post_append_connection))
+            data = extract_data(imap_response)
+            self.uid = data[0].split()[2][:-1]
+            self.conn(callback=add_loop_cb(_on_post_append_connection))
 
+        @pygmail.errors.check_imap_state(callback)
         def _on_received_connection(connection):
             connection.append(
                 self.mailbox.name,
@@ -736,9 +727,11 @@ class Message(MessageBase):
                 callback=add_loop_cb(_on_append)
             )
 
+        @pygmail.errors.check_imap_response(callback)
         def _on_select(is_selected):
             self.conn(callback=add_loop_cb(_on_received_connection))
 
+        @pygmail.errors.check_imap_response(callback)
         def _on_delete(was_deleted):
             self.mailbox.select(callback=add_loop_cb(_on_select))
 
@@ -859,28 +852,28 @@ class Message(MessageBase):
             and False in all other situations.
         """
 
+        @pygmail.errors.check_imap_response(callback)
         def _on_post_safe_labeling(imap_response, message_uid, message_id):
-            if not self._callback_if_error(imap_response, callback):
-                response = (message_uid, message_id) if message_uid else False
-                loop_cb_args(callback, response)
+            response = (message_uid, message_id) if message_uid else False
+            loop_cb_args(callback, response)
 
+        @pygmail.errors.check_imap_state(callback)
         def _post_safe_save_connection(connection, message_uid, message_id):
-            callback_params = dict(message_uid=message_uid,
-                                   message_id=message_id)
+            cbp = dict(message_uid=message_uid, message_id=message_id)
+            cb = add_loop_cb_args(_on_post_safe_labeling, cbp)
             label_value = '(%s)' % (safe_label,)
-            connection.uid("STORE", message_uid,
-                           "X-GM-LABELS", label_value,
-                           callback=add_loop_cb_args(_on_post_safe_labeling,
-                                                     callback_params))
+            connection.uid("STORE", message_uid, "X-GM-LABELS", label_value,
+                           callback=cb)
 
+        @pygmail.errors.check_imap_response(callback)
         def _on_safe_save_append(imap_response, message_copy):
-            if not self._callback_if_error(imap_response, callback):
-                data = extract_data(imap_response)
-                message_uid = data[0].split()[2][:-1]
-                cbp = dict(message_uid=message_uid, message_id=message_copy['Message-Id'])
-                self.conn(callback=add_loop_cb_args(_post_safe_save_connection,
-                                                    cbp))
+            data = extract_data(imap_response)
+            msg_uid = data[0].split()[2][:-1]
+            cbp = dict(message_uid=msg_uid, message_id=message_copy['Message-Id'])
+            cb = add_loop_cb_args(_post_safe_save_connection, cbp)
+            self.conn(callback=cb)
 
+        @pygmail.errors.check_imap_state(callback)
         def _on_safe_save_connection(connection, message_copy):
             cbp = dict(message_copy=message_copy)
             connection.append(self.mailbox.name, '(\Seen)',
@@ -888,6 +881,7 @@ class Message(MessageBase):
                               message_copy.as_string(),
                               callback=add_loop_cb_args(_on_safe_save_append, cbp))
 
+        @pygmail.errors.check_imap_response(callback)
         def _on_safe_save_message(message_copy):
             cbp = dict(message_copy=message_copy)
             self.conn(callback=add_loop_cb_args(_on_safe_save_connection, cbp))

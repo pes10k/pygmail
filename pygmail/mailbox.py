@@ -3,7 +3,7 @@ import string
 import message as GM
 from pygmail.utilities import loop_cb_args, add_loop_cb, extract_data, add_loop_cb_args, io_loop
 from datetime import timedelta
-from pygmail.errors import register_callback_if_error, is_auth_error
+import pygmail.errors
 from tornado.web import app_log
 
 GM_ID_EXTRACTOR = re.compile(r'\d+ \(X-GM-MSGID (\d+)\)')
@@ -209,13 +209,14 @@ class Mailbox(object):
             error
 
         """
+        @pygmail.errors.check_imap_response(callback)
         def _on_select_complete(imap_response):
-            if not register_callback_if_error(imap_response, callback):
-                data = extract_data(imap_response)
-                self.account.last_viewed_mailbox = self
-                loop_cb_args(callback,
-                             int(Mailbox.COUNT_PATTERN.sub("", str(data))))
+            data = extract_data(imap_response)
+            self.account.last_viewed_mailbox = self
+            msg_count = int(Mailbox.COUNT_PATTERN.sub("", str(data)))
+            loop_cb_args(callback, msg_count)
 
+        @pygmail.errors.check_imap_state(callback)
         def _on_connection(connection):
             connection.select(mailbox=self.name,
                               callback=add_loop_cb(_on_select_complete))
@@ -236,99 +237,105 @@ class Mailbox(object):
         Returns:
             A boolean description of whether a message was successfully deleted
         """
+        @pygmail.errors.check_imap_response(callback)
         def _on_original_mailbox_reselected(imap_response):
-            if not register_callback_if_error(imap_response, callback):
-                loop_cb_args(callback, True)
+            loop_cb_args(callback, True)
 
+        @pygmail.errors.check_imap_state(callback)
         def _on_recevieved_connection_7(connection):
             connection.select(self.name,
                               callback=add_loop_cb(_on_original_mailbox_reselected))
 
+        @pygmail.errors.check_imap_response(callback)
         def _on_expunge_complete(imap_response):
-            if not register_callback_if_error(imap_response, callback):
-                self.conn(callback=add_loop_cb(_on_recevieved_connection_7))
+            self.conn(callback=add_loop_cb(_on_recevieved_connection_7))
 
+        @pygmail.errors.check_imap_state(callback)
         def _on_recevieved_connection_6(connection):
             connection.expunge(callback=add_loop_cb(_on_expunge_complete))
 
+        @pygmail.errors.check_imap_response(callback)
         def _on_delete_complete(imap_response):
-            if not register_callback_if_error(imap_response, callback):
-                self.conn(callback=add_loop_cb(_on_recevieved_connection_6))
+            self.conn(callback=add_loop_cb(_on_recevieved_connection_6))
 
+        @pygmail.errors.check_imap_state(callback)
         def _on_received_connection_4(connection, deleted_uid):
             del self.num_tries
             connection.uid('STORE', deleted_uid, 'FLAGS', '\\Deleted',
                            callback=add_loop_cb(_on_delete_complete))
 
+        @pygmail.errors.check_imap_response(callback)
         def _on_search_for_message_complete(imap_response):
-            if not register_callback_if_error(imap_response, callback):
-                data = extract_data(imap_response)
+            data = extract_data(imap_response)
 
-                # Its possible here that we've tried to select the message
-                # we want to delete from the trash bin before google has
-                # registered it there for us.  If our search attempt returned
-                # a uid, then we're good to go and can continue.
-                try:
-                    deleted_uid = data[0].split()[-1]
-                    callback_params = dict(deleted_uid=deleted_uid)
-                    self.conn(callback=add_loop_cb_args(_on_received_connection_4,
-                                                        callback_params))
+            # Its possible here that we've tried to select the message
+            # we want to delete from the trash bin before google has
+            # registered it there for us.  If our search attempt returned
+            # a uid, then we're good to go and can continue.
+            try:
+                deleted_uid = data[0].split()[-1]
+                cbp = dict(deleted_uid=deleted_uid)
+                cb = add_loop_cb_args(_on_received_connection_4, cbp)
+                self.conn(callback=cb)
 
-                # If not though, we should wait a couple of seconds and try
-                # again.  We'll do this a maximum of 5 times.  If we still
-                # haven't had any luck at this point, we give up and return
-                # False, indiciating we weren't able to delete the message
-                # fully.
-                except IndexError:
-                    self.num_tries += 1
+            # If not though, we should wait a couple of seconds and try
+            # again.  We'll do this a maximum of 5 times.  If we still
+            # haven't had any luck at this point, we give up and return
+            # False, indiciating we weren't able to delete the message
+            # fully.
+            except IndexError:
+                self.num_tries += 1
 
-                    # If this is the 5th time we're trying to delete this
-                    # message, we're going to call it a loss and stop trying.
-                    # We do some minimal clean up and then just bail out
-                    # Otherwise, schedule another attempt in 2 seconds and
-                    # hope that gmail has updated its indexes by then
-                    if self.num_tries == 5:
-                        del self.num_tries
-                        if __debug__:
-                            app_log.error("Giving up trying to delete message")
-                            app_log.error("got response: {response}".format(response=str(imap_response)))
-                        loop_cb_args(callback, False)
-                    else:
-                        if __debug__:
-                            app_log.error("Try {num} to delete deleting message.  Waiting".format(num=self.num_tries))
-                            app_log.error("got response: {response}".format(response=str(imap_response)))
-                        io_loop().add_timeout(
-                            timedelta(seconds=2),
-                            lambda: _on_trash_selected(None, force_success=True))
+                # If this is the 5th time we're trying to delete this
+                # message, we're going to call it a loss and stop trying.
+                # We do some minimal clean up and then just bail out
+                # Otherwise, schedule another attempt in 2 seconds and
+                # hope that gmail has updated its indexes by then
+                if self.num_tries == 5:
+                    del self.num_tries
+                    if __debug__:
+                        app_log.error("Giving up trying to delete message")
+                        app_log.error("got response: {response}".format(response=str(imap_response)))
+                    loop_cb_args(callback, False)
+                else:
+                    if __debug__:
+                        app_log.error("Try {num} to delete deleting message.  Waiting".format(num=self.num_tries))
+                        app_log.error("got response: {response}".format(response=str(imap_response)))
+                    io_loop().add_timeout(
+                        timedelta(seconds=2),
+                        lambda: _on_trash_selected(None, force_success=True))
 
+        @pygmail.errors.check_imap_state(callback)
         def _on_received_connection_3(connection):
             connection.uid('search', None, 'X-GM-RAW',
                            '"rfc822msgid:{msg_id}"'.format(msg_id=message_id),
                            callback=add_loop_cb(_on_search_for_message_complete))
 
+        @pygmail.errors.check_imap_response(callback)
         def _on_trash_selected(imap_response, force_success=False):
             # It can take several attempts for the deleted message to show up
             # in the trash label / folder.  We'll try 5 times, waiting
             # two sec between each attempt
-            if not register_callback_if_error(imap_response, callback):
-                self.conn(callback=add_loop_cb(_on_received_connection_3))
+            self.conn(callback=add_loop_cb(_on_received_connection_3))
 
+        @pygmail.errors.check_imap_state(callback)
         def _on_received_connection_2(connection):
             self.num_tries = 0
             connection.select(trash_folder,
                               callback=add_loop_cb(_on_trash_selected))
 
+        @pygmail.errors.check_imap_response(callback)
         def _on_message_moved(imap_response):
-            if not register_callback_if_error(imap_response, callback):
-                self.conn(callback=add_loop_cb(_on_received_connection_2))
+            self.conn(callback=add_loop_cb(_on_received_connection_2))
 
+        @pygmail.errors.check_imap_state(callback)
         def _on_connection(connection):
             connection.uid('COPY', uid, trash_folder,
                            callback=add_loop_cb(_on_message_moved))
 
+        @pygmail.errors.check_imap_response(callback)
         def _on_select(was_selected):
-            if not register_callback_if_error(was_selected, callback):
-                self.account.connection(callback=_on_connection)
+            self.account.connection(callback=_on_connection)
 
         self.select(callback=add_loop_cb(_on_select))
 
@@ -340,14 +347,15 @@ class Mailbox(object):
             True if a folder / label was removed. Otherwise, False (such
             as if the current folder / label doesn't exist at deletion)
         """
+        @pygmail.errors.check_imap_response(callback, require_ok=False)
         def _on_mailbox_deletion(imap_response):
-            if not register_callback_if_error(imap_response, callback, require_ok=False):
-                data = extract_data(imap_response)
-                was_success = data[0] == "Success"
-                loop_cb_args(callback, was_success)
+            data = extract_data(imap_response)
+            was_success = data[0] == "Success"
+            loop_cb_args(callback, was_success)
 
+        @pygmail.errors.check_imap_state(callback)
         def _on_connection(connection):
-            if is_auth_error(connection):
+            if pygmail.errors.is_auth_error(connection):
                 loop_cb_args(callback, connection)
             else:
                 connection.delete(self.name,
@@ -415,21 +423,23 @@ class Mailbox(object):
         teasers = kwargs.get("teaser")
         gm_ids = kwargs.get('gm_ids')
 
+        @pygmail.errors.check_imap_response(callback)
         def _on_search(imap_response):
-            if not register_callback_if_error(imap_response, callback):
-                data = extract_data(imap_response)
-                ids = string.split(data[0])
-                ids_to_fetch = page_from_list(ids, limit, offset)
-                self.messages_by_id(ids_to_fetch, only_uids=only_uids,
-                                    full=full,
-                                    callback=add_loop_cb(callback),
-                                    teaser=teasers,
-                                    gm_ids=gm_ids)
+            data = extract_data(imap_response)
+            ids = string.split(data[0])
+            ids_to_fetch = page_from_list(ids, limit, offset)
+            self.messages_by_id(ids_to_fetch, only_uids=only_uids,
+                                full=full,
+                                callback=add_loop_cb(callback),
+                                teaser=teasers,
+                                gm_ids=gm_ids)
 
+        @pygmail.errors.check_imap_state(callback)
         def _on_connection(connection):
             rs, data = connection.search(None, 'X-GM-RAW', term,
                                          callback=add_loop_cb(_on_search))
 
+        @pygmail.errors.check_imap_response(callback)
         def _on_mailbox_selected(was_changed):
             self.account.connection(callback=add_loop_cb(_on_connection))
 
@@ -476,20 +486,22 @@ class Mailbox(object):
         def _on_messages_by_id(messages):
             loop_cb_args(callback, messages)
 
+        @pygmail.errors.check_imap_response(callback)
         def _on_search(imap_response):
-            if not register_callback_if_error(imap_response, callback):
-                data = extract_data(imap_response)
-                ids = string.split(data[0])
-                ids_to_fetch = page_from_list(ids, limit, offset)
-                self.messages_by_id(ids_to_fetch, only_uids=only_uids,
-                                    full=full,
-                                    callback=add_loop_cb(callback),
-                                    teaser=teasers,
-                                    gm_ids=gm_ids)
+            data = extract_data(imap_response)
+            ids = string.split(data[0])
+            ids_to_fetch = page_from_list(ids, limit, offset)
+            self.messages_by_id(ids_to_fetch, only_uids=only_uids,
+                                full=full,
+                                callback=add_loop_cb(callback),
+                                teaser=teasers,
+                                gm_ids=gm_ids)
 
+        @pygmail.errors.check_imap_state(callback)
         def _on_connection(connection):
             connection.search(None, 'ALL', callback=add_loop_cb(_on_search))
 
+        @pygmail.errors.check_imap_response(callback)
         def _on_select_complete(result):
             self.account.connection(callback=add_loop_cb(_on_connection))
 
@@ -522,12 +534,13 @@ class Mailbox(object):
         teasers = kwargs.get("teaser")
         gm_ids = kwargs.get('gm_ids')
 
+        @pygmail.errors.check_imap_response(callback)
         def _on_fetch(imap_response):
-            if not register_callback_if_error(imap_response, callback):
-                data = extract_data(imap_response)
-                messages = parse_fetch_request(data, self, teasers, full, gm_ids)
-                loop_cb_args(callback, messages)
+            data = extract_data(imap_response)
+            messages = parse_fetch_request(data, self, teasers, full, gm_ids)
+            loop_cb_args(callback, messages)
 
+        @pygmail.errors.check_imap_state(callback)
         def _on_connection(connection):
             if gm_ids:
                 request = imap_queries["gm_id"]
@@ -576,12 +589,13 @@ class Mailbox(object):
         teasers = kwargs.get("teaser")
         gm_ids = kwargs.get('gm_ids')
 
+        @pygmail.errors.check_imap_response(callback)
         def _on_fetch(imap_response):
-            if not register_callback_if_error(imap_response, callback):
-                data = extract_data(imap_response)
-                messages = parse_fetch_request(data, self, teasers, full, gm_ids)
-                loop_cb_args(callback, messages[0] if len(messages) > 0 else None)
+            data = extract_data(imap_response)
+            messages = parse_fetch_request(data, self, teasers, full, gm_ids)
+            loop_cb_args(callback, messages[0] if len(messages) > 0 else None)
 
+        @pygmail.errors.check_imap_state(callback)
         def _on_connection(connection):
             if gm_ids:
                 request = imap_queries["gm_id"]
@@ -595,6 +609,7 @@ class Mailbox(object):
             connection.uid("FETCH", uid, request,
                            callback=add_loop_cb(_on_fetch))
 
+        @pygmail.errors.check_imap_response(callback)
         def _on_select(result):
             self.account.connection(callback=add_loop_cb(_on_connection))
 
@@ -621,19 +636,21 @@ class Mailbox(object):
             None if none could be found.  If an error is encountered, an
             IMAPError object will be returned.
         """
+        @pygmail.errors.check_imap_response(callback)
         def _on_search_complete(imap_response):
-            if not register_callback_if_error(imap_response, callback):
-                data = extract_data(imap_response)
-                if len(data) == 0 or not data[0]:
-                    loop_cb_args(callback, None)
-                else:
-                    uid = data[0]
-                    self.fetch(uid, full=full, callback=callback, **kwargs)
+            data = extract_data(imap_response)
+            if len(data) == 0 or not data[0]:
+                loop_cb_args(callback, None)
+            else:
+                uid = data[0]
+                self.fetch(uid, full=full, callback=callback, **kwargs)
 
+        @pygmail.errors.check_imap_state(callback)
         def _on_connection(connection):
             connection.uid('search', None, 'X-GM-MSGID', gm_id,
                            callback=add_loop_cb(_on_search_complete))
 
+        @pygmail.errors.check_imap_response(callback)
         def _on_select(result):
             self.account.connection(callback=add_loop_cb(_on_connection))
 
@@ -672,33 +689,36 @@ class Mailbox(object):
         # bother doing any network io
         if len(ids) == 0:
             loop_cb_args(callback, [])
-        else:
-            def _on_fetch(imap_response):
-                if not register_callback_if_error(imap_response, callback):
-                    data = extract_data(imap_response)
-                    if only_uids:
-                        uids = [string.split(elm, " ")[4][:-1] for elm in data]
-                        loop_cb_args(callback, uids)
-                    else:
-                        messages = parse_fetch_request(data, self, teasers, full, gm_ids)
-                        loop_cb_args(callback, messages)
+            return
 
-            def _on_connection(connection):
-                if gm_ids:
-                    request = imap_queries["gm_id"]
-                elif only_uids:
-                    request = imap_queries["uid"]
-                elif full:
-                    request = imap_queries["body"]
-                elif teasers:
-                    request = imap_queries["teaser"]
-                else:
-                    request = imap_queries["header"]
+        @pygmail.errors.check_imap_response(callback)
+        def _on_fetch(imap_response):
+            data = extract_data(imap_response)
+            if only_uids:
+                uids = [string.split(elm, " ")[4][:-1] for elm in data]
+                loop_cb_args(callback, uids)
+            else:
+                messages = parse_fetch_request(data, self, teasers, full, gm_ids)
+                loop_cb_args(callback, messages)
 
-                connection.fetch(",".join(ids), request,
-                                 callback=add_loop_cb(_on_fetch))
+        @pygmail.errors.check_imap_state(callback)
+        def _on_connection(connection):
+            if gm_ids:
+                request = imap_queries["gm_id"]
+            elif only_uids:
+                request = imap_queries["uid"]
+            elif full:
+                request = imap_queries["body"]
+            elif teasers:
+                request = imap_queries["teaser"]
+            else:
+                request = imap_queries["header"]
 
-            def _on_select(result):
-                self.account.connection(callback=add_loop_cb(_on_connection))
+            cb = add_loop_cb(_on_fetch)
+            connection.fetch(",".join(ids), request, callback=cb)
 
-            self.select(callback=add_loop_cb(_on_select))
+        @pygmail.errors.check_imap_response(callback)
+        def _on_select(result):
+            self.account.connection(callback=add_loop_cb(_on_connection))
+
+        self.select(callback=add_loop_cb(_on_select))

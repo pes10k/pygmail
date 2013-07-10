@@ -4,40 +4,61 @@ All of this is aimed to provide Exception handling like functionality in a
 callback based environment."""
 
 from pygmail.utilities import loop_cb_args
+import imaplib2
 from tornado.log import app_log
 
 
-def register_callback_if_error(imap_response, callback, require_ok=True):
-    """Checks to see if the given imap response is an error.  If so,
-    it is registered as the only argument to the given callback function
-    on the Torando event loop.
+def check_imap_state(callback):
+    """Decorator Checks to see if the given imaplib2 connection is still in a state
+    where we can still make requests against it (ie its not in LOGOUT).
+    If the connection is in LOGOUT, call the callback with a ConnectionError
+    instance.  Otherwise, call the original function.
 
     Args:
-        imap_response -- The 3 part tuple (response, cb_arg, error) that
-                         imaplib2 returns as a result of any callback response
-        callback      -- A callback function to register on the event loop
-                         in case of an error
+        callback -- The callback specified by the client that expects a response
+                    from this callback loop
+    """
+    def decorator(func):
+        def inner(*args, **kwargs):
+            conn = args[0]
+            if not isinstance(conn, imaplib2.IMAP4) or conn.state == imaplib2.LOGOUT:
+                rs = IMAPClosedError('IMAP in state LOGOUT', func.__name__)
+                callback(rs)
+            else:
+                func(*args, **kwargs)
+        return inner
+    return decorator
+
+
+def check_imap_response(callback, require_ok=True):
+    """Decorator that Checks to see if the given imap response is an error.
+    If so, it is registered as the only argument to the given callback function
+    on the Torando event loop.  Otherwise, the decorated function is called
+    unchanged
+
+    Args:
+       callback -- A callback function to register on the event loop
+                   in case of an error
 
     Keyword Args:
         require_ok -- Whether responses other than "OK" from the IMAP server
                       should trigger an error
-
-    Returns:
-        True if an error was encountered and the callback was queued. Otherwise
-        False
     """
-    if isinstance(imap_response, tuple):
-        error = check_for_response_error(imap_response, require_ok=require_ok)
-        if error:
-            loop_cb_args(callback, error)
-            return True
-        else:
-            return False
-    elif is_imap_error(imap_response) or is_auth_error(imap_response):
-        loop_cb_args(callback, error)
-        return True
-    else:
-        return False
+    def decorator(func):
+        def inner(*args, **kwargs):
+            imap_response = args[0]
+            if isinstance(imap_response, tuple):
+                error = check_for_response_error(imap_response, require_ok=require_ok)
+                if error:
+                    loop_cb_args(callback, error)
+                else:
+                    func(*args, **kwargs)
+            elif is_imap_error(imap_response) or is_auth_error(imap_response) or is_connection_closed_error(imap_response):
+                loop_cb_args(callback, imap_response)
+            else:
+                func(*args, **kwargs)
+        return inner
+    return decorator
 
 
 def check_for_response_error(imap_response, require_ok=True):
@@ -94,7 +115,13 @@ def is_imap_error(response):
         True if the given object is an IMAPError, and False in all other
         instances
     """
-    return response and response.__class__ is IMAPError
+    return isinstance(response, IMAPError)
+
+
+class AuthError(ExceptionLike):
+    """An exeption-like class signifying that an authentication attempt with the
+    gmail server was not accepted. This is handled through a class instead of
+    through exceptions to make things easier with the event loop."""
 
 
 def is_auth_error(response):
@@ -104,16 +131,25 @@ def is_auth_error(response):
         True if the given object is an AuthError, and False in all other
         instances
     """
-    return response.__class__ is AuthError
+    return isinstance(response, AuthError)
 
 
-class AuthError(ExceptionLike):
-    """An exeption-like class signifying that an authentication attempt with the
-    gmail server was not accepted. This is handled through a class instead of
-    through exceptions to make things easier with the event loop."""
+class IMAPClosedError(ExceptionLike):
+    """An exception-like object used for wrapping errors where we were about
+    to make a call against a closed IMAP connection"""
 
 
-def is_encoding_error(response):
+def is_connection_closed_error(response):
+    """Checks to see if the given object is an IMAPClosedError instance
+
+    Returns:
+        True if the given object is an AuthError, and False in all other
+        instances
+    """
+    return isinstance(response, IMAPClosedError)
+
+
+def is_encoding_error(rs):
     """Checks to see if the given object is an error thrown as a result
     of trying to encode a message body as Unicode
 
@@ -121,4 +157,15 @@ def is_encoding_error(response):
         True if the given object is a Unicode error, and False in all other
         instances
     """
-    return response.__class__ is UnicodeDecodeError or response.__class__ is LookupError
+    return isinstance(rs, UnicodeDecodeError) or isinstance(rs, LookupError)
+
+
+def is_error(response):
+    """Checks to see if the given item is any of the psuedo-exception like
+    objects we use for passing errors back to the main IOLoop
+
+    Returns:
+        True if the given object is an exception like error, and False in all
+        other instances
+    """
+    return isinstance(response, ExceptionLike)
