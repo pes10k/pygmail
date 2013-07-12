@@ -3,6 +3,7 @@ import re
 import email.utils
 import email.header as eh
 import email.encoders as ENC
+import email.charset
 import time
 import pygmail.errors
 from imaplib import Internaldate2tuple, ParseFlags
@@ -67,10 +68,13 @@ def message_part_charset(part, message):
     if not message_part_charset:
         return "ascii"
     else:
-        # It is sometimes possible for the encoding section to include
-        # information we're not interested in, such as mime verison.
-        # So, we strip that off here if its included
-        return message_part_charset.split(" ")[0]
+        if isinstance(message_part_charset, email.charset.Charset):
+            return message_part_charset.get_output_charset() or 'utf-8'
+        else:
+            # It is sometimes possible for the encoding section to include
+            # information we're not interested in, such as mime verison.
+            # So, we strip that off here if its included
+            return message_part_charset.split(" ")[0]
 
 
 def message_in_list(message, message_list):
