@@ -9,8 +9,8 @@ from tornado.log import app_log
 
 
 def check_imap_state(callback):
-    """Decorator Checks to see if the given imaplib2 connection is still in a state
-    where we can still make requests against it (ie its not in LOGOUT).
+    """Decorator that checks to see if the given imaplib2 connection is still in
+    a state where we can still make requests against it (ie its not in LOGOUT).
     If the connection is in LOGOUT, call the callback with a ConnectionError
     instance.  Otherwise, call the original function.
 
@@ -31,7 +31,7 @@ def check_imap_state(callback):
 
 
 def check_imap_response(callback, require_ok=True):
-    """Decorator that Checks to see if the given imap response is an error.
+    """Decorator that checks to see if the given imap response is an error.
     If so, it is registered as the only argument to the given callback function
     on the Torando event loop.  Otherwise, the decorated function is called
     unchanged

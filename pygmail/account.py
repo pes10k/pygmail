@@ -309,8 +309,13 @@ class Account(object):
         def _on_connection(connection):
             id_params = []
             for k, v in self.id_params.items():
-                id_params.append(k)
-                id_params.append(v)
-            connection.id(id_params, callback=add_loop_cb(_on_id))
+                id_params.append('"' + k + '"')
+                id_params.append('"' + v + '"')
+            # The IMAPlib2 exposed version of the "ID" command doesn't
+            # format the parameters the same way gmail wants them, so
+            # we just do it ourselves (imaplib2 wraps them in an extra
+            # paren)
+            connection._simple_command('ID', "(" + " ".join(id_params) + ")",
+                                       callback=add_loop_cb(_on_id))
 
         self.connection(callback=add_loop_cb(_on_connection))
