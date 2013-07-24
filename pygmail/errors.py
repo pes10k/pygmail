@@ -21,7 +21,7 @@ def check_imap_state(callback):
     def decorator(func):
         def inner(*args, **kwargs):
             conn = args[0]
-            if not isinstance(conn, imaplib2.IMAP4) or conn.state == imaplib2.LOGOUT:
+            if not isinstance(conn, imaplib2.IMAP4) or conn.state == imaplib2.imaplib2.LOGOUT:
                 rs = IMAPClosedError('IMAP in state LOGOUT', func.__name__)
                 callback(rs)
             else:
