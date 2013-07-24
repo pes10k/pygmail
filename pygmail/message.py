@@ -16,6 +16,7 @@ from pygmail.address import Address
 from utilities import loop_cb_args, add_loop_cb, add_loop_cb_args, extract_data, extract_first_bodystructure, parse, ParseError, io_loop
 from pygmail.errors import is_encoding_error, check_for_response_error
 from tornado.log import app_log
+from hashlib import sha1
 
 
 # A regular expression used for extracting metadata information out
@@ -936,10 +937,13 @@ class Message(MessageBase):
         custom_header = "X-%s-Data" % (header_label,)
         copied_message[custom_header] = b64encode(serilization)
 
+        h = sha1()
+        h.update(copied_message[custom_header])
+
         # Next generate a new unique ID we can use for identifying this
         # message. The only requirement here is to be unique in the account
         # and to be formatted correctly.
-        new_message_id = "<%s@pygmail>" % (uuid4().hex,)
+        new_message_id = "<%s@pygmail>" % (h.hexdigest(),)
 
         try:
             copied_message.replace_header("Message-Id", new_message_id)
@@ -996,7 +1000,6 @@ class Attachment(object):
         try:
             return self._hash
         except AttributeError:
-            from hashlib import sha1
             h = sha1()
             h.update(self.raw.get_payload())
             self._hash = h.hexdigest()
