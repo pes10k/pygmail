@@ -2,6 +2,7 @@
 from the imaplib2 library"""
 
 import tornado
+import time
 from datetime import timedelta
 
 
@@ -75,22 +76,6 @@ def loop_cb_args(callback, arg):
     loop_cb(lambda: callback(arg))
 
 
-def loop_cb_args_delayed(callback, arg, secs=3):
-    """Registers a function, with a given argument, to be executed by the
-    tornado event loop in a given number of seconds from now.
-
-    Args:
-        callback -- A function to be executed by the torando event loop
-        arg      -- A single argument to be passed to the callback function
-
-    Keyword Args:
-        secs -- The time from now, in seconds, that the callback should be
-                executed
-    """
-    exe_time = timedelta(seconds=secs)
-    loop_cb(io_loop().add_timeout(exe_time, lambda: callback(arg)))
-
-
 def add_loop_cb(callback):
     """Registers a callback function to be exected by tornado event loop. This
     function isn't registered on the callback loop immediatly, but is actually
@@ -120,6 +105,30 @@ def add_loop_cb_args(callback, args):
     """
     return lambda value: loop_cb(lambda: callback(value, **args))
 
+
+def call_in(func, secs, is_async=False, *args, **kwargs):
+    if is_async:
+        io_loop().add_timeout(timedelta(seconds=secs), lambda: func(*args, **kwargs))
+    else:
+        time.sleep(secs)
+        func(*args, **kwargs)
+
+def imap_cmd(func, callback, is_async=False, callback_args=None, *args, **kwargs):
+
+    if is_async:
+        if callback_args:
+            callback_func = add_loop_cb_args(callback, callback_args)
+        else:
+            callback_func = add_loop_cb(callback)
+
+        kwargs['callback'] = callback_func
+
+        func(*args, **kwargs)
+    else:
+        if callback_args:
+            return callback(func(*args, **kwargs), callback_args)
+        else:
+            return callback(func(*args, **kwargs))
 
 
 ### Parsing Utilities, "adapted" from
