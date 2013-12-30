@@ -1,7 +1,6 @@
-import imaplib2
 import mailbox
 import pygmail.errors
-from pygmail.utilities import loop_cb_args, add_loop_cb, extract_data, extract_type, imap_cmd
+from pygmail.utilities import extract_data, extract_type, _cmd_cb, _cmd
 from pygmail.errors import is_auth_error, AuthError, check_for_response_error, is_imap_error, IMAPError
 
 
@@ -47,6 +46,7 @@ class Account(object):
                               be used to shim in other, API compatible classes.
         """
         if not imap_class:
+            import imaplib2
             imap_class = imaplib2.IMAP4_SSL
 
         self.email = email
@@ -80,30 +80,26 @@ class Account(object):
         def _on_mailbox_creation(imap_response):
             error = check_for_response_error(imap_response)
             if error:
-                loop_cb_args(callback, error)
+                return _cmd(callback, error)
             else:
                 response_type = extract_type(imap_response)
                 if response_type == "NO":
-                    loop_cb_args(callback, False)
+                    return _cmd(callback, False)
                 else:
                     data = extract_data(imap_response)
                     self.boxes = None
                     was_success = data[0] == "Success"
-                    loop_cb_args(callback, was_success)
+                    return _cmd(callback, was_success)
 
         @pygmail.errors.check_imap_state(callback)
         def _on_connection(connection):
             if is_auth_error(connection):
-                loop_cb_args(callback, connection)
+                return _cmd(callback, connection)
             else:
-                # connection.create(name,
-                #                   callback=add_loop_cb(_on_mailbox_creation))
+                return _cmd_cb(connection.create, _on_mailbox_creation,
+                               bool(callback), name)
 
-                return imap_cmd(connection.create, _on_mailbox_creation,
-                                func_args=[name], is_async=callback)
-
-        # self.connection(callback=add_loop_cb(_on_connection))
-        return imap_cmd(self.connection, _on_connection, is_async=callback)
+        return _cmd_cb(self.connection, _on_connection, bool(callback))
 
     def all_mailbox(self, callback=None):
         """Returns a mailbox object that represents the [Gmail]/All Mail folder
@@ -119,15 +115,13 @@ class Account(object):
         def _on_mailboxes(mailboxes):
             for box in mailboxes:
                 if box.full_name.find('(\HasNoChildren \All)') == 0:
-                    callback(box)
-                    return
-            callback(None)
+                    return _cmd(callback, box)
+            return _cmd(callback, None)
 
         if self.boxes:
-            _on_mailboxes(self.boxes)
+            return _on_mailboxes(self.boxes)
         else:
-            # self.mailboxes(callback=_on_mailboxes)
-            return imap_cmd(self.mailboxes, _on_mailboxes, is_async=callback)
+            return _cmd_cb(self.mailboxes, _on_mailboxes, bool(callback))
 
     def trash_mailbox(self, callback=None):
         """Returns a mailbox object that represents the [Gmail]/Trash folder
@@ -143,15 +137,13 @@ class Account(object):
         def _on_mailboxes(mailboxes):
             for box in mailboxes:
                 if box.full_name.find('(\HasNoChildren \Trash)') == 0:
-                    callback(box)
-                    return
-            callback(None)
+                    return _cmd(callback, box)
+            return _cmd(callback, None)
 
         if self.boxes:
-            _on_mailboxes(self.boxes)
+            return _on_mailboxes(self.boxes)
         else:
-            # self.mailboxes(callback=_on_mailboxes)
-            return imap_cmd(self.mailboxes, _on_mailboxes, is_async=callback)
+            return _cmd_cb(self.mailboxes, _on_mailboxes, bool(callback))
 
 
     def mailboxes(self, callback=None):
@@ -166,7 +158,7 @@ class Account(object):
 
         """
         if self.boxes is not None:
-            loop_cb_args(callback, self.boxes)
+            return _cmd(callback, self.boxes)
         else:
             @pygmail.errors.check_imap_response(callback)
             def _on_mailboxes(imap_response):
@@ -174,18 +166,16 @@ class Account(object):
                 self.boxes = []
                 for box in data:
                     self.boxes.append(mailbox.Mailbox(self, box))
-                loop_cb_args(callback, self.boxes)
+                return _cmd(callback, self.boxes)
 
             @pygmail.errors.check_imap_state(callback)
             def _on_connection(connection):
                 if is_auth_error(connection) or is_imap_error(connection):
-                    loop_cb_args(callback, connection)
+                    return _cmd(callback, connection)
                 else:
-                    # connection.list(callback=add_loop_cb(_on_mailboxes))
-                    return imap_cmd(connection.list, _on_mailboxes, is_async=callback)
+                    return _cmd_cb(connection.list, _on_mailboxes, bool(callback))
 
-            # self.connection(callback=add_loop_cb(_on_connection))
-            return imap_cmd(self.connection, _on_connection, is_async=callback)
+            return _cmd_cb(self.connection, _on_connection, bool(callback))
 
 
     def get(self, mailbox_name, callback=None):
@@ -209,12 +199,10 @@ class Account(object):
         def _retreived_mailboxes(mailboxes):
             for mailbox in mailboxes:
                 if mailbox.name == mailbox_name:
-                    loop_cb_args(callback, mailbox)
-                    return
-            loop_cb_args(callback, None)
+                    return _cmd(callback, mailbox)
+            return _cmd(callback, None)
 
-        # self.mailboxes(callback=add_loop_cb(_retreived_mailboxes))
-        return imap_cmd(self.mailboxes, _retreived_mailboxes, is_async=callback)
+        return _cmd_cb(self.mailboxes, _retreived_mailboxes, bool(callback))
 
     def connection(self, callback=None):
         """Creates an authenticated connection to gmail over IMAP
@@ -234,51 +222,40 @@ class Account(object):
 
         """
         def _on_authentication(imap_response):
-            response, cb_arg, imap_error = imap_response
-            if not response or response[0] != "OK":
+            is_error = check_for_response_error(imap_response)
+
+            if is_error:
                 if self.oauth2_token:
                     error = "User / OAuth2 token (%s, %s) were not accepted" % (
                         self.email, self.oauth2_token)
                 else:
                     error = "User / password (%s, %s) were not accepted" % (
                         self.email, self.password)
-                if imap_error and len(imap_error) > 1:
-                    error += " " + imap_error[1]
-                loop_cb_args(callback, AuthError(error))
+                return _cmd(callback, AuthError(error))
             else:
                 self.connected = True
                 if self.id_params:
-                    # self.id(callback=callback)
-                    return imap_cmd(self.id, callback, is_async=callback)
+                    return _cmd_cb(self.id, callback, bool(callback))
                 else:
-                    loop_cb_args(callback, self.conn)
+                    return _cmd(callback, self.conn)
 
         if self.connected:
-            loop_cb_args(callback, self.conn)
+            return _cmd(callback, self.conn)
         elif self.oauth2_token:
             auth_params = self.email, self.oauth2_token
             xoauth2_string = 'user=%s\1auth=Bearer %s\1\1' % auth_params
             try:
-                # self.conn.authenticate(
-                #     "XOAUTH2",
-                #     lambda x: xoauth2_string,
-                #     callback=add_loop_cb(_on_authentication)
-                # )
-                return imap_cmd(self.conn.authenticate,
-                                _on_authentication,
-                                "XOAUTH2", lambda x: xoauth2_string,
-                                is_async=callback)
+                return _cmd_cb(self.conn.authenticate,
+                              _on_authentication, bool(callback),
+                              "XOAUTH2", lambda x: xoauth2_string)
             except:
-                loop_cb_args(callback, AuthError(""))
+                return _cmd(callback, AuthError(""))
         else:
             try:
-                # self.conn.login(self.email, self.password,
-                #                 callback=add_loop_cb(_on_authentication))
-                return imap_cmd(self.conn.login, _on_authentication,
-                                self.email, self.password,
-                                is_async=callback)
-            except:
-                loop_cb_args(callback, AuthError(""))
+                return _cmd_cb(self.conn.login, _on_authentication,
+                              bool(callback), self.email, self.password)
+            except Exception, e:
+                return _cmd(callback, e)
 
     def clear_mailbox_cache(self):
         """Clears the local cache of mailboxes names / objects. This will
@@ -305,19 +282,17 @@ class Account(object):
         def _on_logout(imap_response):
             typ = extract_type(imap_response)
             self.connected = False
-            loop_cb_args(callback, typ == "BYE")
+            return _cmd(callback, typ == "BYE")
 
         @pygmail.errors.check_imap_response(callback, require_ok=False)
         def _on_close(imap_response):
-            # self.conn.logout(callback=add_loop_cb(_on_logout))
-            return imap_cmd(self.conn.logout, _on_logout, is_async=callback)
+            return _cmd_cb(self.conn.logout, _on_logout, bool(callback))
 
         if self.last_viewed_mailbox:
             try:
-                # self.conn.close(callback=add_loop_cb(_on_close))
-                return imap_cmd(self.conn.close, _on_close, is_async=callback)
+                return _cmd_cb(self.conn.close, _on_close, bool(callback))
             except Exception as e:
-                loop_cb_args(callback, IMAPError(e))
+                return _cmd(callback, IMAPError(e))
         else:
             return _on_close(None)
 
@@ -337,7 +312,7 @@ class Account(object):
         """
         @pygmail.errors.check_imap_response(callback)
         def _on_id(imap_response):
-            loop_cb_args(callback, self.conn)
+            return _cmd(callback, self.conn)
 
         @pygmail.errors.check_imap_state(callback)
         def _on_connection(connection):
@@ -349,12 +324,8 @@ class Account(object):
             # format the parameters the same way gmail wants them, so
             # we just do it ourselves (imaplib2 wraps them in an extra
             # paren)
+            return _cmd_cb(connection._simple_command, _on_id,
+                           bool(callback), 'ID',
+                           "(" + " ".join(id_params) + ")")
 
-            # connection._simple_command('ID', "(" + " ".join(id_params) + ")",
-            #                            callback=add_loop_cb(_on_id))
-            imap_cmd(connection._simple_command, _on_id,
-                     'ID', "(" + " ".join(id_params) + ")",
-                     is_async=callback)
-
-        # self.connection(callback=add_loop_cb(_on_connection))
-        return imap_cmd(self.connection, _on_connection, is_async=callback)
+        return _cmd_cb(self.connection, _on_connection, bool(callback))

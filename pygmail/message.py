@@ -8,14 +8,13 @@ import time
 import pygmail.errors
 from imaplib import Internaldate2tuple, ParseFlags
 from base64 import b64decode
-from datetime import datetime, timedelta
+from datetime import datetime
 from quopri import encodestring, decodestring
 from email.parser import HeaderParser
 from email.Iterators import typed_subpart_iterator
 from pygmail.address import Address
-from utilities import loop_cb_args, add_loop_cb, add_loop_cb_args, extract_data, extract_first_bodystructure, parse, ParseError, call_in, imap_cmd
+from pygmail.utilities import extract_data, extract_first_bodystructure, parse, ParseError, _cmd_in, _cmd_cb, _cmd, _log
 from pygmail.errors import is_encoding_error, check_for_response_error
-from tornado.log import app_log
 from hashlib import sha1
 
 
@@ -173,8 +172,8 @@ class MessageBase(object):
         metadata_rs = metadata_pattern.match(metadata)
 
         if not metadata_rs:
-            app_log.error("Bad formatted metadata string")
-            app_log.error(metadata)
+            _log.error("Bad formatted metadata string")
+            _log.error(metadata)
 
         self.id, self.gmail_id, labels, self.uid, internal_date = metadata_rs.groups()
         self.internal_date = Internaldate2tuple(metadata)
@@ -318,31 +317,31 @@ class MessageBase(object):
         """
         @pygmail.errors.check_imap_response(callback)
         def _on_original_mailbox_reselected(imap_response):
-            loop_cb_args(callback, True)
+            return _cmd(callback, True)
 
         @pygmail.errors.check_imap_state(callback)
         def _on_recevieved_connection_6(connection):
-            return imap_cmd(connection.select, _on_original_mailbox_reselected,
-                            self.mailbox.name, is_async=callback)
+            return _cmd_cb(connection.select, _on_original_mailbox_reselected,
+                           bool(callback), self.mailbox.name)
 
         @pygmail.errors.check_imap_response(callback)
         def _on_expunge_complete(imap_response):
-            return imap_cmd(self.conn, _on_recevieved_connection_6, is_async=callback)
+            return _cmd_cb(self.conn, _on_recevieved_connection_6, bool(callback))
 
         @pygmail.errors.check_imap_state(callback)
         def _on_recevieved_connection_5(connection):
-            return imap_cmd(connection.expunge, _on_expunge_complete, is_async=callback)
+            return _cmd_cb(connection.expunge, _on_expunge_complete, bool(callback))
 
         @pygmail.errors.check_imap_response(callback)
         def _on_delete_complete(imap_response):
-            return imap_cmd(self.conn, _on_recevieved_connection_5, is_async=callback)
+            return _cmd_cb(self.conn, _on_recevieved_connection_5, bool(callback))
 
         @pygmail.errors.check_imap_state(callback)
         def _on_received_connection_4(connection, deleted_uid):
             del self.num_tries
-            return imap_cmd(connection.uid, _on_delete_complete,
-                            'STORE', deleted_uid, '+FLAGS', '\\Deleted',
-                            is_async=callback)
+            return _cmd_cb(connection.uid, _on_delete_complete,
+                           bool(callback), 'STORE', deleted_uid,
+                           '+FLAGS', '\\Deleted')
 
         @pygmail.errors.check_imap_response(callback)
         def _on_search_for_message_complete(imap_response):
@@ -355,10 +354,8 @@ class MessageBase(object):
             try:
                 deleted_uid = data[0].split()[-1]
                 cbp = dict(deleted_uid=deleted_uid)
-                # cb = add_loop_cb_args(_on_received_connection_4, cbp)
-                # self.conn(callback=cb)
-                return imap_cmd(self.conn, _on_received_connection_4,
-                                callback_args=cbp, is_async=callback)
+                return _cmd_cb(self.conn, _on_received_connection_4,
+                               bool(callback), callback_args=cbp)
 
             # If not though, we should wait a couple of seconds and try
             # again.  We'll do this a maximum of 5 times.  If we still
@@ -376,55 +373,53 @@ class MessageBase(object):
                 if self.num_tries == 5:
                     del self.num_tries
                     if __debug__:
-                        app_log.error(u"Giving up trying to delete message {subject} - {id}".format(subject=self.subject, id=self.message_id))
-                        app_log.error("got response: {response}".format(response=str(imap_response)))
-                    loop_cb_args(callback, False)
+                        _log.error(u"Giving up trying to delete message {subject} - {id}".format(subject=self.subject, id=self.message_id))
+                        _log.error("got response: {response}".format(response=str(imap_response)))
+                    return _cmd(callback, False)
                 else:
                     if __debug__:
-                        app_log.error("Try {num} to delete deleting message {subject} - {id} failed.  Waiting".format(num=self.num_tries, subject=self.subject, id=self.message_id))
-                        app_log.error("got response: {response}".format(response=str(imap_response)))
-                    call_in(_on_trash_selected, 2, None, force_success=True, is_async=callback)
+                        _log.error("Try {num} to delete deleting message {subject} - {id} failed.  Waiting".format(num=self.num_tries, subject=self.subject, id=self.message_id))
+                        _log.error("got response: {response}".format(response=str(imap_response)))
+                    return _cmd_in(_on_trash_selected, 2, None, force_success=True, is_async=callback)
 
         @pygmail.errors.check_imap_state(callback)
         def _on_received_connection_3(connection):
-            return imap_cmd(connection.uid, _on_search_for_message_complete,
-                            'search', None, 'X-GM-RAW',
-                            '"rfc822msgid:{msg_id}"'.format(msg_id=self.message_id),
-                            is_async=callback)
+            return _cmd_cb(connection.uid, _on_search_for_message_complete,
+                           bool(callback), 'search', None, 'X-GM-RAW',
+                            '"rfc822msgid:{msg_id}"'.format(msg_id=self.message_id))
 
         def _on_trash_selected(imap_response, force_success=False):
             # It can take several attempts for the deleted message to show up
             # in the trash label / folder.  We'll try 5 times, waiting
             # two sec between each attempt
             if force_success:
-                return imap_cmd(self.conn, _on_received_connection_3, is_async=callback)
+                return _cmd_cb(self.conn, _on_received_connection_3, bool(callback))
             else:
                 is_error = check_for_response_error(imap_response)
                 if is_error:
-                    loop_cb_args(callback, is_error)
+                    return _cmd(callback, is_error)
                 else:
-                    return imap_cmd(self.conn, _on_received_connection_3, is_async=callback)
+                    return _cmd_cb(self.conn, _on_received_connection_3, bool(callback))
 
         @pygmail.errors.check_imap_state(callback)
         def _on_received_connection_2(connection):
             self.num_tries = 0
-            return imap_cmd(connection.select, _on_trash_selected, trash_folder, is_async=callback)
+            return _cmd_cb(connection.select, _on_trash_selected, bool(callback), trash_folder)
 
         @pygmail.errors.check_imap_response(callback)
         def _on_message_moved(imap_response):
-            return imap_cmd(self.conn, _on_received_connection_2, is_async=callback)
+            return _cmd_cb(self.conn, _on_received_connection_2, bool(callback))
 
         @pygmail.errors.check_imap_state(callback)
         def _on_received_connection(connection):
-            return imap_cmd(connection.uid, _on_message_moved, 'COPY', self.uid,
-                            trash_folder, is_async=callback)
+            return _cmd_cb(connection.uid, _on_message_moved, bool(callback),
+                           'COPY', self.uid, trash_folder)
 
         @pygmail.errors.check_imap_response(callback)
         def _on_mailbox_select(is_selected):
-            return imap_cmd(self.conn, _on_received_connection, is_async=callback)
+            return _cmd_cb(self.conn, _on_received_connection, bool(callback))
 
-        self.mailbox.select(callback=add_loop_cb(_on_mailbox_select))
-        return imap_cmd(self.mailbox.select, _on_mailbox_select, is_async=callback)
+        return _cmd_cb(self.mailbox.select, _on_mailbox_select, bool(callback))
 
 
 class MessageHeaders(MessageBase):
@@ -439,12 +434,12 @@ class MessageHeaders(MessageBase):
         """Fetches an abbreviated, teaser version of the message, containing
         just the text of the first text or html part of the message body
         """
-        return imap_cmd(self.mailbox.fetch, callback, self.uid, teaser=True, is_async=callback)
+        return _cmd_cb(self.mailbox.fetch, callback, bool(callback), self.uid, teaser=True)
 
     def full_message(self, callback=None):
         """Fetches the full version of the message that this message is a teaser
         version of."""
-        return imap_cmd(self.mailbox.fetch, callback, self.uid, full=True, is_async=callback)
+        return _cmd_cb(self.mailbox.fetch, callback, bool(callback), self.uid, full=True)
 
 
 class MessageTeaser(MessageBase):
@@ -522,7 +517,7 @@ class MessageTeaser(MessageBase):
     def full_message(self, callback=None):
         """Fetches the full version of the message that this message is a teaser
         version of."""
-        return imap_cmd(self.mailbox.fetch, callback, self.uid, full=True, is_async=callback)
+        return _cmd_cb(self.mailbox.fetch, callback, bool(callback), self.uid, full=True)
 
 
 class Message(MessageBase):
@@ -639,7 +634,7 @@ class Message(MessageBase):
         else:
             return self.body_plain or None
 
-    def attachments(self, callback):
+    def attachments(self, callback=None):
         """Returns a list of attachment portions of the current message.
 
         Returns:
@@ -650,11 +645,11 @@ class Message(MessageBase):
         # and build the associated attribute objects
 
         try:
-            loop_cb_args(callback, self._attachments)
+            return _cmd(callback, self._attachments)
         except AttributeError:
             is_attachment = lambda x: x['Content-Disposition'] and "attachment" in x['Content-Disposition']
             self._attachments = [Attachment(s) for s in self.raw.walk() if is_attachment(s)]
-            loop_cb_args(callback, self._attachments)
+            return _cmd(callback, self._attachments)
 
     def as_string(self):
         """Returns a representation of the message as a raw string
@@ -698,7 +693,7 @@ class Message(MessageBase):
         """
         @pygmail.errors.check_imap_response(callback)
         def _on_post_labeling(imap_response):
-            loop_cb_args(callback, True)
+            return _cmd(callback, True)
 
         @pygmail.errors.check_imap_state(callback)
         def _on_post_append_connection(connection):
@@ -714,38 +709,36 @@ class Message(MessageBase):
             #
             # @todo parse and rewrite labels correctly
             labels_value = '(%s)' % (self.labels_raw or '',)
-            return imap_cmd(connection.uid, _on_post_labeling,
-                            "STORE", self.uid, "+X-GM-LABELS", labels_value,
-                            is_async=callback)
+            return _cmd_cb(connection.uid, _on_post_labeling, bool(callback),
+                           "STORE", self.uid, "+X-GM-LABELS", labels_value)
 
         @pygmail.errors.check_imap_response(callback)
         def _on_append(imap_response):
             data = extract_data(imap_response)
             self.uid = data[0].split()[2][:-1]
-            return imap_cmd(self.conn, _on_post_append_connection, is_async=callback)
+            return _cmd_cb(self.conn, _on_post_append_connection, bool(callback))
 
         @pygmail.errors.check_imap_state(callback)
         def _on_received_connection(connection):
-            return imap_cmd(connection.append, _on_append,
+            return _cmd_cb(connection.append, _on_append, bool(callback),
                             self.mailbox.name,
                             '(%s)' % (' '.join(self.flags),) if self.flags else "()",
                             self.internal_date or time.gmtime(),
-                            self.raw.as_string(),
-                            is_async=callback)
+                            self.raw.as_string())
 
         @pygmail.errors.check_imap_response(callback)
         def _on_select(is_selected):
-            return imap_cmd(self.conn, _on_received_connection, is_async=callback)
+            return _cmd_cb(self.conn, _on_received_connection, bool(callback))
 
         @pygmail.errors.check_imap_response(callback)
         def _on_delete(was_deleted):
-            return imap_cmd(self.mailbox.select, _on_select, is_async=callback)
+            return _cmd_cb(self.mailbox.select, _on_select, bool(callback))
 
         # If we're not using the safe / transactional method of creating
         # a copy before we delete the existing version, we can just skip
         # ahead to the delete action. Otherwise, we need to first create
         # a safe version of this message.
-        return imap_cmd(self.delete, _on_delete, trash_folder, is_async=callback)
+        return _cmd_cb(self.delete, _on_delete, trash_folder, bool(callback))
 
     def replace(self, find, replace, trash_folder, callback=None):
         """Performs a body-wide string search and replace
@@ -796,8 +789,7 @@ class Message(MessageBase):
 
                 if is_encoding_error(new_payload_section):
                     self.encoding_error = new_payload_section
-                    loop_cb_args(callback, self.encoding_error)
-                    return
+                    return _cmd(callback, self.encoding_error)
 
                 if isinstance(find, tuple) or isinstance(find, list):
                     for i in range(0, len(find)):
@@ -831,7 +823,7 @@ class Message(MessageBase):
                 del part._normalized
                 del part._orig_charset
 
-        return imap_cmd(self.save, callback, trash_folder, is_async=callback)
+        return _cmd_cb(self.save, callback, bool(callback), trash_folder)
 
     def save_copy(self, safe_label, header_label="PyGmail", callback=None):
         """Saves a semi-identical copy of the message in another label / mailbox
@@ -861,44 +853,40 @@ class Message(MessageBase):
         @pygmail.errors.check_imap_response(callback)
         def _on_post_safe_labeling(imap_response, message_uid, message_id):
             response = (message_uid, message_id) if message_uid else False
-            loop_cb_args(callback, response)
+            return _cmd(callback, response)
 
         @pygmail.errors.check_imap_state(callback)
         def _post_safe_save_connection(connection, message_uid, message_id):
             cbp = dict(message_uid=message_uid, message_id=message_id)
-            # cb = add_loop_cb_args(_on_post_safe_labeling, cbp)
             label_value = '(%s)' % (safe_label,)
-            return imap_cmd(connection.uid, _on_post_safe_labeling,
-                            "STORE", message_uid, "X-GM-LABELS", label_value,
-                            callback_args=cbp,
-                            is_async=callback)
+            return _cmd_cb(connection.uid, _on_post_safe_labeling,
+                           bool(callback), "STORE", message_uid, "X-GM-LABELS",
+                           label_value, callback_args=cbp)
 
         @pygmail.errors.check_imap_response(callback)
         def _on_safe_save_append(imap_response, message_copy):
             data = extract_data(imap_response)
             msg_uid = data[0].split()[2][:-1]
             cbp = dict(message_uid=msg_uid, message_id=message_copy['Message-Id'])
-            # cb = add_loop_cb_args(_post_safe_save_connection, cbp)
-            return imap_cmd(self.conn, _post_safe_save_connection,
-                            callback_args=cbp, is_async=callback)
+            return _cmd_cb(self.conn, _post_safe_save_connection, bool(callback),
+                           callback_args=cbp)
 
         @pygmail.errors.check_imap_state(callback)
         def _on_safe_save_connection(connection, message_copy):
             cbp = dict(message_copy=message_copy)
-            return imap_cmd(connection.append, _on_safe_save_append,
-                            self.mailbox.name, '(\Seen)',
-                            self.internal_date or time.gmtime(),
-                            message_copy.as_string(),
-                            callback_args=cbp,
-                            is_async=callback)
+            return _cmd_cb(connection.append, _on_safe_save_append,
+                           bool(callback),  self.mailbox.name, '(\Seen)',
+                           self.internal_date or time.gmtime(),
+                           message_copy.as_string(),
+                           callback_args=cbp)
 
         @pygmail.errors.check_imap_response(callback)
         def _on_safe_save_message(message_copy):
             cbp = dict(message_copy=message_copy)
-            return imap_cmd(self.conn, _on_safe_save_connection,
-                            callback_args=cbp, is_async=callback)
+            return _cmd_cb(self.conn, _on_safe_save_connection, bool(callback),
+                           callback_args=cbp)
 
-        return imap_cmd(self.safe_save_message, _on_safe_save_message, is_async=callback)
+        return _cmd_cb(self.safe_save_message, _on_safe_save_message, bool(callback))
 
     def safe_save_message(self, header_label="PyGmail", callback=None):
         """Create a text version of the message that is similar to, but not
@@ -960,7 +948,7 @@ class Message(MessageBase):
             copied_message.replace_header('Subject', new_subject)
         except KeyError:
             copied_message.add_header('Subject', new_subject)
-        loop_cb_args(callback, copied_message)
+        return _cmd(callback, copied_message)
 
 
 class Attachment(object):

@@ -3,10 +3,13 @@ talking with the IMAP server, and functions that help in dealing with them.
 All of this is aimed to provide Exception handling like functionality in a
 callback based environment."""
 
-from pygmail.utilities import loop_cb_args
-import imaplib2
-from tornado.log import app_log
+from pygmail.utilities import _cmd, _log
 
+try:
+    import imaplib2 as imaplib
+    imaplib.imaplib = imaplib.imaplib2
+except ImportError:
+    import imaplib
 
 def check_imap_state(callback):
     """Decorator that checks to see if the given imaplib2 connection is still in
@@ -21,11 +24,14 @@ def check_imap_state(callback):
     def decorator(func):
         def inner(*args, **kwargs):
             conn = args[0]
-            if not isinstance(conn, imaplib2.IMAP4) or conn.state == imaplib2.imaplib2.LOGOUT:
+            if not isinstance(conn, imaplib.IMAP4) or conn.state == imaplib.imaplib.LOGOUT:
                 rs = IMAPClosedError('IMAP in state LOGOUT', func.__name__)
-                callback(rs)
+                if callback:
+                    return _cmd(callback, rs)
+                else:
+                    return rs
             else:
-                func(*args, **kwargs)
+                return func(*args, **kwargs)
         return inner
     return decorator
 
@@ -50,13 +56,19 @@ def check_imap_response(callback, require_ok=True):
             if isinstance(imap_response, tuple):
                 error = check_for_response_error(imap_response, require_ok=require_ok)
                 if error:
-                    loop_cb_args(callback, error)
+                    if callback:
+                        return _cmd(callback, error)
+                    else:
+                        return error
                 else:
-                    func(*args, **kwargs)
+                    return func(*args, **kwargs)
             elif is_imap_error(imap_response) or is_auth_error(imap_response) or is_connection_closed_error(imap_response):
-                loop_cb_args(callback, imap_response)
+                if callback:
+                    return _cmd(callback, imap_response)
+                else:
+                    return imap_response
             else:
-                func(*args, **kwargs)
+                return func(*args, **kwargs)
         return inner
     return decorator
 
@@ -77,13 +89,22 @@ def check_for_response_error(imap_response, require_ok=True):
         An IMAPError object encapsulating the error (in the case of an error),
         or None (in the case of no error).
     """
-    response, cb_arg, error = imap_response
-    if response is None:
-        if __debug__:
-            app_log.error(error[1])
-        return IMAPError(error[1])
+    # A three item response means a response from an async request, while
+    # a two item response is a result from a standard blocking request
+    if len(imap_response) == 3:
+        response, cb_arg, error = imap_response
+        if response is None:
+            if __debug__:
+                _log.error(error[1])
+            return IMAPError(error[1])
+        else:
+            typ, data = response
+            if typ != "OK" and require_ok:
+                return IMAPError(desc=data, type=typ)
+            else:
+                return None
     else:
-        typ, data = response
+        typ, data = imap_response
         if typ != "OK" and require_ok:
             return IMAPError(desc=data, type=typ)
         else:

@@ -1,10 +1,9 @@
 """Functions for interacting with the toranado IO loop and parsing responses
 from the imaplib2 library"""
 
-import tornado
+import logging
 import time
 from datetime import timedelta
-
 
 def extract_first_bodystructure(structure):
     stack = 0
@@ -31,7 +30,10 @@ def extract_data(imap_response):
     Returns:
         The data portion of the imaplib2 request
     """
-    return imap_response[0][1]
+    if len(imap_response) == 3:
+        return imap_response[0][1]
+    else:
+        return imap_response[1]
 
 
 def extract_type(imap_response):
@@ -44,91 +46,143 @@ def extract_type(imap_response):
     Returns:
         The type portion of the imaplib2 request
     """
-    return imap_response[0][0]
+    if len(imap_response) == 3:
+        return imap_response[0][0]
+    else:
+        return imap_response[0]
 
 
-def io_loop():
-    """Returns a reference to the tornado IO Loop
-
-    Returns:
-        Shared reference to the IOLoop object
-    """
-    return tornado.ioloop.IOLoop.instance()
-
-
-def loop_cb(callback):
-    """Adds a callback function to be executed by the tornado event loop
+def schedule_func(func, secs=None):
+    """Schedules a function for future calling on the event loop.  Currently
+    the only event loop supported is the tornado one.
 
     Args:
-        callback -- a function to be executed by the torando event loop
+        func -- the function to schedule for execution
+
+    Keyword Args:
+        secs -- The number of seconds in the future that the function should
+                be called on. If None, "func" function is schedule for execution
+                ASAP
     """
-    io_loop().add_callback(callback)
+    import tornado
+    io_loop = tornado.ioloop.IOLoop.instance()
+    if secs:
+        io_loop.add_timeout(timedelta(seconds=secs), func)
+    else:
+        io_loop.add_callback(func)
 
 
-def loop_cb_args(callback, arg):
-    """Adds a callback function to be executed by the tornado event loop with
-    a single given argument, passed through to the callback function.
+def _log(msg, log_name="tornado.application"):
+    """Simple point of indirection to handle all logging code in one place,
+    to further lessen dependence on Tornado
 
     Args:
-        callback -- A function to be executed by the torando event loop
-        arg      -- A single argument to be passed to the callback function
+        msg -- the message to log
+
+    Keyword Args:
+        log_name -- the name of the system logger to send messages to
     """
-    loop_cb(lambda: callback(arg))
+    logging.getLogger(log_name).error(msg)
 
 
-def add_loop_cb(callback):
-    """Registers a callback function to be exected by tornado event loop. This
-    function isn't registered on the callback loop immediatly, but is actually
-    itself a function to register a callback.  It is appropriate for use when
-    you want to pass a function as an argument to another callback expecting
-    function, but that function isn't tornado aware.
+def _cmd_in(func, secs, is_async=False, *args, **kwargs):
+    """Calls a function in a given amount of time, either by sleeping / blocking
+    the thread, or by scheduling a callback on the event loop.  This funciton is
+    used as the point of indirection to support both async and blocking
+    functionality.
+
+    Note that the unnamed arguments and keyword arguments will be provided
+    as arguments to the main function being called
 
     Args:
-        callback -- A function to be executed by the torando event loop
+        func        -- the main function that should be called
+        secs        -- the number of seconds to wait before the "func" function
+                       is called
+
+    Keyword Args:
+        is_async      -- truth-y value, describing whether the function should
+                         be called asyncronously (in the event loop) or
+                         syncronously / blocking
     """
-    return lambda arg: loop_cb_args(callback, arg)
-
-
-def add_loop_cb_args(callback, args):
-    """Registers a callback function to be exected by tornado event loop. This
-    function isn't registered on the callback loop immediatly, but is actually
-    itself a function to register a callback.  It is appropriate for use when
-    you want to pass a function as an argument to another callback expecting
-    function, but that function isn't tornado aware.
-
-    This function allows for a dict of arguments to be passed along to the
-    callback function.
-
-    Args:
-        callback -- A function to be executed by the torando event loop
-        args     -- A dict of arguments to pass along to the callback function
-    """
-    return lambda value: loop_cb(lambda: callback(value, **args))
-
-
-def call_in(func, secs, is_async=False, *args, **kwargs):
     if is_async:
-        io_loop().add_timeout(timedelta(seconds=secs), lambda: func(*args, **kwargs))
+        schedule_func(lambda: func(*args, **kwargs), secs)
     else:
         time.sleep(secs)
-        func(*args, **kwargs)
+        return func(*args, **kwargs)
 
-def imap_cmd(func, callback, is_async=False, callback_args=None, *args, **kwargs):
+
+def _cmd(func=None, arg=None):
+    """Point of indirection where a function is either called immediatly (with)
+    the provided arguments (when called in blocking mode), or scheduled for
+    future calling on the event loop (in async mode).
+
+    Note that the unnamed arguments and keyword arguments will be provided
+    as arguments to the main function being called, NOT the callback function
+
+    Args:
+        func        -- the main function that should be called
+
+    Keyword Args:
+        is_async      -- truth-y value, describing whether the function should
+                         be called asyncronously (in the event loop) or
+                         syncronously / blocking
+    Returns:
+        If being called asyncronously, nothing is returned.  If called
+        syncronously, the result of the "func" function is returned
+    """
+    if func:
+        cb = lambda: func(arg)
+        schedule_func(cb)
+    else:
+        return arg
+
+
+def _cmd_cb(main_func, callback, is_async, *args, **kwargs):
+    """Point of indirection where a function is called asyncronously (if were'
+    operating in the event loop) or syncronously (if we're being called
+    otherwise)
+
+    Note that the unnamed arguments and keyword arguments will be provided
+    as arguments to the main function being called, NOT the callback function
+
+    Args:
+        main_obj    -- the main object to call a method on.
+        main_func   -- the main function that should be called, usually a
+                       method on "main_obj".
+        callback    -- the function that should receive the result of the
+                       func function
+        is_async    -- truth-y value, describing whether the function should
+                       be called asyncronously (in the event loop) or
+                       syncronously / blocking
+
+    Keyword Args:
+        callback_args -- a dictionary of values that should be passed as the
+                         second argument to the callback function
+
+    Returns:
+        If being called asyncronously, nothing is returned.  If called
+        syncronously, the result of the "func" function is returned
+    """
+    if "callback_args" in kwargs:
+        callback_args = kwargs['callback_args']
+        del kwargs['callback_args']
+    else:
+        callback_args = {}
 
     if is_async:
         if callback_args:
-            callback_func = add_loop_cb_args(callback, callback_args)
+            callback_func = lambda res: schedule_func(lambda: callback(res, **callback_args))
         else:
-            callback_func = add_loop_cb(callback)
+            callback_func = lambda res: schedule_func(lambda: callback(res))
 
         kwargs['callback'] = callback_func
-
-        func(*args, **kwargs)
+        main_func(*args, **kwargs)
     else:
         if callback_args:
-            return callback(func(*args, **kwargs), callback_args)
+            return callback(main_func(*args, **kwargs), callback_args)
         else:
-            return callback(func(*args, **kwargs))
+            rs = main_func(*args, **kwargs)
+            return callback(rs)
 
 
 ### Parsing Utilities, "adapted" from
