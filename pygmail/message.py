@@ -380,7 +380,7 @@ class MessageBase(object):
                     if __debug__:
                         _log.error("Try {num} to delete deleting message {subject} - {id} failed.  Waiting".format(num=self.num_tries, subject=self.subject, id=self.message_id))
                         _log.error("got response: {response}".format(response=str(imap_response)))
-                    return _cmd_in(_on_trash_selected, 2, None, force_success=True, is_async=callback)
+                    return _cmd_in(_on_trash_selected, 2, bool(callback), force_success=True)
 
         @pygmail.errors.check_imap_state(callback)
         def _on_received_connection_3(connection):
@@ -738,7 +738,7 @@ class Message(MessageBase):
         # a copy before we delete the existing version, we can just skip
         # ahead to the delete action. Otherwise, we need to first create
         # a safe version of this message.
-        return _cmd_cb(self.delete, _on_delete, trash_folder, bool(callback))
+        return _cmd_cb(self.delete, _on_delete, bool(callback), trash_folder)
 
     def remove_attachment(self, attachment):
         """Removes a given attachment from the message body. This method

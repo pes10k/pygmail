@@ -242,26 +242,25 @@ class Mailbox(object):
         @pygmail.errors.check_imap_state(callback)
         def _on_recevieved_connection_7(connection):
             return _cmd_cb(connection.select, _on_original_mailbox_reselected,
-                            is_async=callback)
+                           bool(callback))
 
         @pygmail.errors.check_imap_response(callback)
         def _on_expunge_complete(imap_response):
-            return _cmd_cb(self.conn, _on_recevieved_connection_7, is_async=callback)
+            return _cmd_cb(self.conn, _on_recevieved_connection_7, bool(callback))
 
         @pygmail.errors.check_imap_state(callback)
         def _on_recevieved_connection_6(connection):
-            return _cmd_cb(connection.expunge, _on_expunge_complete, callback)
+            return _cmd_cb(connection.expunge, _on_expunge_complete, bool(callback))
 
         @pygmail.errors.check_imap_response(callback)
         def _on_delete_complete(imap_response):
-            return _cmd_cb(self.conn, _on_recevieved_connection_6, is_async=callback)
+            return _cmd_cb(self.conn, _on_recevieved_connection_6, bool(callback))
 
         @pygmail.errors.check_imap_state(callback)
         def _on_received_connection_4(connection, deleted_uid):
             del self.num_tries
-            return _cmd_cb(connection.uid, _on_delete_complete,
-                            'STORE', deleted_uid, 'FLAGS', '\\Deleted',
-                            is_async=callback)
+            return _cmd_cb(connection.uid, _on_delete_complete, bool(callback),
+                            'STORE', deleted_uid, 'FLAGS', '\\Deleted')
 
         @pygmail.errors.check_imap_response(callback)
         def _on_search_for_message_complete(imap_response):
@@ -275,8 +274,7 @@ class Mailbox(object):
                 deleted_uid = data[0].split()[-1]
                 cbp = dict(deleted_uid=deleted_uid)
                 return _cmd_cb(self.conn, _on_received_connection_4,
-                                callback_args=cbp,
-                                is_async=callback)
+                               bool(callback), callback_args=cbp)
 
             # If not though, we should wait a couple of seconds and try
             # again.  We'll do this a maximum of 5 times.  If we still
@@ -301,44 +299,42 @@ class Mailbox(object):
                     if __debug__:
                         _log.error("Try {num} to delete deleting message.  Waiting".format(num=self.num_tries))
                         _log.error("got response: {response}".format(response=str(imap_response)))
-                    return _cmd_in(_on_trash_selected, 2, None, is_async=callback)
+                    return _cmd_in(_on_trash_selected, 2, bool(callback))
 
         @pygmail.errors.check_imap_state(callback)
         def _on_received_connection_3(connection):
             return _cmd_cb(connection.uid, _on_search_for_message_complete,
-                            'search', None, 'X-GM-RAW',
-                            '"rfc822msgid:{msg_id}"'.format(msg_id=message_id),
-                            is_async=callback)
+                           bool(callback), 'search', None, 'X-GM-RAW',
+                            '"rfc822msgid:{msg_id}"'.format(msg_id=message_id))
 
         @pygmail.errors.check_imap_response(callback)
         def _on_trash_selected(imap_response):
             # It can take several attempts for the deleted message to show up
             # in the trash label / folder.  We'll try 5 times, waiting
             # two sec between each attempt
-            return _cmd_cb(self.conn, _on_received_connection_3, is_async=callback)
+            return _cmd_cb(self.conn, _on_received_connection_3, bool(callback))
 
         @pygmail.errors.check_imap_state(callback)
         def _on_received_connection_2(connection):
             self.num_tries = 0
-            return _cmd_cb(connection.select, _on_trash_selected, is_async=callback)
+            return _cmd_cb(connection.select, _on_trash_selected, bool(callback))
 
         @pygmail.errors.check_imap_response(callback)
         def _on_message_moved(imap_response):
-            return _cmd_cb(self.conn, _on_received_connection_2, is_async=callback)
+            return _cmd_cb(self.conn, _on_received_connection_2, bool(callback))
 
         @pygmail.errors.check_imap_state(callback)
         def _on_connection(connection):
-            return _cmd_cb(connection.uid, _on_message_moved,
-                            'COPY', uid, trash_folder,
-                            is_async=callback)
+            return _cmd_cb(connection.uid, _on_message_moved, bool(callback),
+                            'COPY', uid, trash_folder)
 
         @pygmail.errors.check_imap_response(callback)
         def _on_select(was_selected):
             # self.account.connection(callback=_on_connection)
             return _cmd_cb(self.account.connection, _on_connection,
-                            is_async=callback)
+                           bool(callback))
 
-        return _cmd_cb(self.select, _on_select, is_async=callback)
+        return _cmd_cb(self.select, _on_select, bool(callback))
 
     def delete(self, callback=None):
         """Removes the mailbox / folder from the current gmail account. In
@@ -360,9 +356,9 @@ class Mailbox(object):
                 return _cmd(callback, connection)
             else:
                 return _cmd_cb(connection.delete, _on_mailbox_deletion,
-                                self.name, is_async=callback)
+                               bool(callback), self.name)
 
-        return _cmd_cb(self.account.connection, _on_connection, is_async=callback)
+        return _cmd_cb(self.account.connection, _on_connection, bool(callback))
 
     def select(self, callback=None):
         """Sets this mailbox as the current active one on the IMAP connection
@@ -383,7 +379,7 @@ class Mailbox(object):
         if self is self.account.last_viewed_mailbox:
             return _cmd(callback, False)
         else:
-            return _cmd_cb(self.count, _on_count_complete, is_async=callback)
+            return _cmd_cb(self.count, _on_count_complete, bool(callback))
 
     def search(self, term, limit=100, offset=0, only_uids=False,
                full=False, callback=None, **kwargs):

@@ -85,7 +85,7 @@ def _log(msg, log_name="tornado.application"):
     logging.getLogger(log_name).error(msg)
 
 
-def _cmd_in(func, secs, is_async=False, *args, **kwargs):
+def _cmd_in(func, secs, is_async, *args, **kwargs):
     """Calls a function in a given amount of time, either by sleeping / blocking
     the thread, or by scheduling a callback on the event loop.  This funciton is
     used as the point of indirection to support both async and blocking
@@ -98,11 +98,9 @@ def _cmd_in(func, secs, is_async=False, *args, **kwargs):
         func        -- the main function that should be called
         secs        -- the number of seconds to wait before the "func" function
                        is called
-
-    Keyword Args:
-        is_async      -- truth-y value, describing whether the function should
-                         be called asyncronously (in the event loop) or
-                         syncronously / blocking
+        is_async    -- truth-y value, describing whether the function should
+                       be called asyncronously (in the event loop) or
+                       syncronously / blocking
     """
     if is_async:
         schedule_func(lambda: func(*args, **kwargs), secs)
