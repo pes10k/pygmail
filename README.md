@@ -3,13 +3,14 @@ pyGmail
 
 Description
 ---
-A python module for interacting with gmail accounts using [OAuth2](https://developers.google.com/google-apps/gmail/oauth_overview) base around the [Tornado Web Server](http://www.tornadoweb.org/) IO Loop.
-
-Most methods have blocking and nonblocking options.
+A python module for reading from and writing to gmail accounts. All operations
+can either be called in "standard" blocking mode or in a non-blocking
+mode using the [Tornado Web Server](http://www.tornadoweb.org/) IO Loop event
+loop.
 
 Requirements
 ---
- * [Tornado](http://www.tornadoweb.org/)
+ * [Tornado](http://www.tornadoweb.org/) (if you want to use the non-blocking methods)
  * [Google OAuth2 Client](https://developers.google.com/api-client-library/python/guide/aaa_oauth)
  * [imaplib2](https://github.com/bcoe/imaplib2)
 

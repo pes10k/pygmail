@@ -635,6 +635,9 @@ class Mailbox(object):
             None if none could be found.  If an error is encountered, an
             IMAPError object will be returned.
         """
+        def _on_fetch(message):
+            return _cmd(callback, message)
+
         @pygmail.errors.check_imap_response(callback)
         def _on_search_complete(imap_response):
             data = extract_data(imap_response)
@@ -642,7 +645,7 @@ class Mailbox(object):
                 return _cmd(callback, None)
             else:
                 uid = data[0]
-                return _cmd_cb(self.fetch, callback, bool(callback),
+                return _cmd_cb(self.fetch, _on_fetch, bool(callback),
                                uid, full=full, **kwargs)
 
         @pygmail.errors.check_imap_state(callback)
@@ -689,7 +692,6 @@ class Mailbox(object):
         # bother doing any network io
         if len(ids) == 0:
             return _cmd(callback, [])
-            return
 
         @pygmail.errors.check_imap_response(callback)
         def _on_fetch(imap_response):

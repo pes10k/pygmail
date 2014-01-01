@@ -648,7 +648,7 @@ class Message(MessageBase):
             return _cmd(callback, self._attachments)
         except AttributeError:
             is_attachment = lambda x: x['Content-Disposition'] and "attachment" in x['Content-Disposition']
-            self._attachments = [Attachment(s) for s in self.raw.walk() if is_attachment(s)]
+            self._attachments = [Attachment(s, self) for s in self.raw.walk() if is_attachment(s)]
             return _cmd(callback, self._attachments)
 
     def as_string(self):
@@ -720,11 +720,11 @@ class Message(MessageBase):
 
         @pygmail.errors.check_imap_state(callback)
         def _on_received_connection(connection):
+            flags_string = '(%s)' % (' '.join(self.flags),) if self.flags else "()"
             return _cmd_cb(connection.append, _on_append, bool(callback),
-                            self.mailbox.name,
-                            '(%s)' % (' '.join(self.flags),) if self.flags else "()",
-                            self.internal_date or time.gmtime(),
-                            self.raw.as_string())
+                           self.mailbox.name, flags_string,
+                           self.internal_date or time.gmtime(),
+                           self.raw.as_string())
 
         @pygmail.errors.check_imap_response(callback)
         def _on_select(is_selected):
@@ -739,6 +739,50 @@ class Message(MessageBase):
         # ahead to the delete action. Otherwise, we need to first create
         # a safe version of this message.
         return _cmd_cb(self.delete, _on_delete, trash_folder, bool(callback))
+
+    def remove_attachment(self, attachment):
+        """Removes a given attachment from the message body. This method
+        alters the message representation in place, not on the server, so
+        to commit this change the caller should then call save() on the
+        message object.
+
+        Args:
+            attachment -- a pygmail.message.Attachment object, representing
+                          an attachment in the body of the current email message
+
+        Return:
+            True if an attachment was removed, otherwise False
+        """
+        # The strategy here is to walk through all parts of the message
+        # and see if we can find a part of the message that matches
+        # that encapuslated in the attachment. If so, we can then rewrite
+        # the payload of the parent element in the email message to contain
+        # whatever it contained before minus the message attachment section
+        # (if the parent is multipart) or an empty string (if the parent is
+        # is not multipart)
+        def _find_in_tree(node, parent=None):
+            if node.is_multipart():
+                parts = node.get_payload()
+                for part in parts:
+                    rs = _find_in_tree(part, node)
+                    if rs:
+                        return rs
+            else:
+                if node.as_string() == attachment.raw.as_string():
+                    return node, parent
+
+        is_in_message = _find_in_tree(self.raw)
+        if not is_in_message:
+            return False
+
+        attach_msg, parent_msg = is_in_message
+        if parent_msg:
+            parent_parts = parent_msg.get_payload()
+            parent_parts.remove(attach_msg)
+            parent_msg.set_payload(parent_parts)
+        else:
+            attach_msg.set_payload("")
+        return True
 
     def replace(self, find, replace, trash_folder, callback=None):
         """Performs a body-wide string search and replace
@@ -776,7 +820,7 @@ class Message(MessageBase):
                 section_encoding = part['Content-Transfer-Encoding']
 
                 # If the message section doesn't advertise an encoding,
-                # then default to quoted printable.  Otherwise the module
+                # then default to quoted printable. Otherwise the module
                 # will default to base64, which can cause problems
                 if not section_encoding:
                     section_encoding = "quoted-printable"
@@ -823,7 +867,10 @@ class Message(MessageBase):
                 del part._normalized
                 del part._orig_charset
 
-        return _cmd_cb(self.save, callback, bool(callback), trash_folder)
+        def _on_save(was_success):
+            return _cmd(callback, was_success)
+
+        return _cmd_cb(self.save, _on_save, bool(callback), trash_folder)
 
     def save_copy(self, safe_label, header_label="PyGmail", callback=None):
         """Saves a semi-identical copy of the message in another label / mailbox
@@ -956,10 +1003,27 @@ class Attachment(object):
     of this class are not intended to be instantiated directly, but managed from
     instances of pygmail.message.Message objects."""
 
-    def __init__(self, msg):
-        self.raw = msg
-        self.type = msg.get_content_type()
-        self.name_raw = msg.get_filename()
+    def __init__(self, msg_part, message):
+        """Initializer for Attachment object
+
+        Args:
+            msg_part -- A email.Message object representing the attachment part
+                        of the email message
+            message --  The pygmail.message.Message instance that represents
+                        the email message that contains this attachment
+        """
+        self.raw = msg_part
+        self.type = msg_part.get_content_type()
+        self.name_raw = msg_part.get_filename()
+        self.message = message
+
+    def __eq__(self, other):
+        """Two messages are only considered equal if they are both instances
+        of pygmail.message.Attachment and the text they're representing is
+        equal"""
+        if not isinstance(other, Attachment):
+            return False
+        return self.raw.to_string() == other.raw.to_string()
 
     def name(self):
         """Returns the original filename for the attachment, if available.
@@ -998,6 +1062,15 @@ class Attachment(object):
             h.update(self.raw.get_payload())
             self._hash = h.hexdigest()
             return self._hash
+
+    def remove(self):
+        """Removes the attachment from the body of the containing message.
+
+        Return:
+            True if the current attachment was removed from the parent (ie
+            if any changes were made) and False in all other cases)
+        """
+        return self.message.remove_attachment(self)
 
     def body(self):
         """Returns a decoded, byte string version of the content of the

@@ -179,7 +179,7 @@ def _cmd_cb(main_func, callback, is_async, *args, **kwargs):
         main_func(*args, **kwargs)
     else:
         if callback_args:
-            return callback(main_func(*args, **kwargs), callback_args)
+            return callback(main_func(*args, **kwargs), **callback_args)
         else:
             rs = main_func(*args, **kwargs)
             return callback(rs)
