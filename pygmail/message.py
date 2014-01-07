@@ -434,12 +434,18 @@ class MessageHeaders(MessageBase):
         """Fetches an abbreviated, teaser version of the message, containing
         just the text of the first text or html part of the message body
         """
-        return _cmd_cb(self.mailbox.fetch, callback, bool(callback), self.uid, teaser=True)
+        def _on_teaser_fetched(teaser):
+            return _cmd(callback, teaser)
+
+        return _cmd_cb(self.mailbox.fetch, _on_teaser_fetched, bool(callback), self.uid, teaser=True)
 
     def full_message(self, callback=None):
         """Fetches the full version of the message that this message is a teaser
         version of."""
-        return _cmd_cb(self.mailbox.fetch, callback, bool(callback), self.uid, full=True)
+        def _on_full_message_fetched(full_msg):
+            return _cmd(callback, full_msg)
+
+        return _cmd_cb(self.mailbox.fetch, _on_full_message_fetched, bool(callback), self.uid, full=True)
 
 
 class MessageTeaser(MessageBase):
@@ -517,7 +523,11 @@ class MessageTeaser(MessageBase):
     def full_message(self, callback=None):
         """Fetches the full version of the message that this message is a teaser
         version of."""
-        return _cmd_cb(self.mailbox.fetch, callback, bool(callback), self.uid, full=True)
+
+        def _on_full_msg_fetched(full_msg):
+            return _cmd(callback, full_msg)
+
+        return _cmd_cb(self.mailbox.fetch, _on_full_msg_fetched, bool(callback), self.uid, full=True)
 
 
 class Message(MessageBase):

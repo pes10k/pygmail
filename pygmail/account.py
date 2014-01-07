@@ -221,6 +221,9 @@ class Account(object):
             connection object.
 
         """
+        def _on_ids(connection):
+            _cmd(callback, connection)
+
         def _on_authentication(imap_response):
             is_error = check_for_response_error(imap_response)
 
@@ -235,7 +238,7 @@ class Account(object):
             else:
                 self.connected = True
                 if self.id_params:
-                    return _cmd_cb(self.id, callback, bool(callback))
+                    return _cmd_cb(self.id, _on_ids, bool(callback))
                 else:
                     return _cmd(callback, self.conn)
 
