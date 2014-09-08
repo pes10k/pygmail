@@ -1,0 +1,14 @@
+setup.py
+pygmail/__init__.py
+pygmail/account.py
+pygmail/address.py
+pygmail/errors.py
+pygmail/mailbox.py
+pygmail/message.py
+pygmail/patching.py
+pygmail/utilities.py
+pygmail.egg-info/PKG-INFO
+pygmail.egg-info/SOURCES.txt
+pygmail.egg-info/dependency_links.txt
+pygmail.egg-info/requires.txt
+pygmail.egg-info/top_level.txt
