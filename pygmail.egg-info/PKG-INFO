@@ -1,6 +1,6 @@
 Metadata-Version: 1.1
 Name: pygmail
-Version: 0.6
+Version: 0.7
 Summary: Tools for interacting with GMail accounts over OAuth2, optionally in the tornado event loop
 Home-page: UNKNOWN
 Author: Peter Snyder

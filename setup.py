@@ -7,7 +7,7 @@ description='Tools for interacting with GMail accounts over OAuth2, optionally i
 
 setup(
     name='pygmail',
-    version='0.6',
+    version='0.7',
     packages=['pygmail'],
     description=description,
     author="Peter Snyder",
