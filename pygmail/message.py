@@ -15,7 +15,7 @@ from email.Iterators import typed_subpart_iterator
 from pygmail.address import Address
 from pygmail.utilities import extract_data, extract_first_bodystructure, parse, ParseError, _cmd_in, _cmd_cb, _cmd, _log
 from pygmail.errors import is_encoding_error, check_for_response_error
-from hashlib import sha1
+from hashlib import sha256
 
 
 # A regular expression used for extracting metadata information out
@@ -988,7 +988,7 @@ class Message(MessageBase):
         custom_header = "X-%s-Data" % (header_label,)
         copied_message[custom_header] = b64encode(serilization)
 
-        h = sha1()
+        h = sha256()
         h.update(copied_message[custom_header])
 
         # Next generate a new unique ID we can use for identifying this
@@ -1056,19 +1056,19 @@ class Attachment(object):
                 self._name = self.name_raw
             return self._name
 
-    def sha1(self):
+    def sha256(self):
         """Returns a hash of the base64 decoded version of the contents of this
         message.  Since we're hashing w/o having to decode the attachment file,
         this is slightly faster than hashing the result of Attachment.body
 
         Return:
-            A SHA1 hash (as a hex byte string) of the base64 version of the
+            A SHA256 hash (as a hex byte string) of the base64 version of the
             attachment
         """
         try:
             return self._hash
         except AttributeError:
-            h = sha1()
+            h = sha256()
             h.update(self.raw.get_payload())
             self._hash = h.hexdigest()
             return self._hash
